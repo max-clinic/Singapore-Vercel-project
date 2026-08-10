@@ -3,22 +3,22 @@ export default async function handler(req, res) {
     "https://magenta-caterpillar-505539.hostingersite.com";
 
   const PUBLIC_ORIGIN =
-    "https://mymaxclinic.sg";
-
-  const incoming = new URL(
-    req.url,
-    `https://${req.headers.host}`
-  );
-
-  const target =
-    WP_ORIGIN +
-    incoming.pathname +
-    incoming.search;
+    "https://www.mymaxclinic.sg";
 
   try {
+    const incoming = new URL(
+      req.url,
+      `https://${req.headers.host}`
+    );
+
+    const target =
+      WP_ORIGIN +
+      incoming.pathname +
+      incoming.search;
+
     const headers = new Headers();
 
-    // Forward browser headers
+    // Forward request headers
     for (const [key, value] of Object.entries(req.headers)) {
       if (
         value &&
@@ -30,19 +30,45 @@ export default async function handler(req, res) {
       ) {
         headers.set(
           key,
-          Array.isArray(value) ? value.join(",") : value
+          Array.isArray(value)
+            ? value.join(",")
+            : value
         );
       }
     }
 
-    // Tell WordPress which public domain the visitor is using
-    headers.set("Host", new URL(WP_ORIGIN).host);
-    headers.set("X-Forwarded-Host", "mymaxclinic.sg");
-    headers.set("X-Forwarded-Proto", "https");
+    // Tell WordPress the real origin
+    headers.set(
+      "Host",
+      new URL(WP_ORIGIN).host
+    );
+
+    headers.set(
+      "X-Forwarded-Host",
+      new URL(PUBLIC_ORIGIN).host
+    );
+
+    headers.set(
+      "X-Forwarded-Proto",
+      "https"
+    );
+
+    // Forward request body for POST/PUT/PATCH
+    let body = undefined;
+
+    if (
+      req.method !== "GET" &&
+      req.method !== "HEAD"
+    ) {
+      if (req.body) {
+        body = req.body;
+      }
+    }
 
     const response = await fetch(target, {
       method: req.method,
       headers,
+      body,
       redirect: "manual"
     });
 
@@ -62,25 +88,36 @@ export default async function handler(req, res) {
       }
     });
 
-    /*
-     * Redirect handling
-     */
+    // Handle redirects
     if (
       response.status >= 300 &&
       response.status < 400
     ) {
-      const location = response.headers.get("location");
+      const location =
+        response.headers.get("location");
 
       if (location) {
-        const fixedLocation = location
-          .replaceAll(WP_ORIGIN, PUBLIC_ORIGIN)
-          .replaceAll(
-            "http://magenta-caterpillar-505539.hostingersite.com",
-            PUBLIC_ORIGIN
-          );
+        const fixedLocation =
+          location
+            .replaceAll(
+              WP_ORIGIN,
+              PUBLIC_ORIGIN
+            )
+            .replaceAll(
+              "http://magenta-caterpillar-505539.hostingersite.com",
+              PUBLIC_ORIGIN
+            )
+            .replaceAll(
+              "https://magenta-caterpillar-505539.hostingersite.com",
+              PUBLIC_ORIGIN
+            );
 
         res.status(response.status);
-        res.setHeader("Location", fixedLocation);
+
+        res.setHeader(
+          "Location",
+          fixedLocation
+        );
 
         return res.end();
       }
@@ -89,9 +126,7 @@ export default async function handler(req, res) {
     const contentType =
       response.headers.get("content-type") || "";
 
-    /*
-     * HTML
-     */
+    // HTML
     if (
       contentType.includes("text/html") ||
       contentType.includes("application/xhtml+xml")
@@ -99,38 +134,25 @@ export default async function handler(req, res) {
       let html = await response.text();
 
       html = html
-        .replaceAll(WP_ORIGIN, PUBLIC_ORIGIN)
+        .replaceAll(
+          WP_ORIGIN,
+          PUBLIC_ORIGIN
+        )
         .replaceAll(
           "http://magenta-caterpillar-505539.hostingersite.com",
           PUBLIC_ORIGIN
         )
         .replaceAll(
           "//magenta-caterpillar-505539.hostingersite.com",
-          "//mymaxclinic.sg"
+          "//www.mymaxclinic.sg"
         );
-
-      // Fix WordPress-generated URLs
-      html = html.replaceAll(
-        'href="/wp-',
-        `href="${PUBLIC_ORIGIN}/wp-`
-      );
 
       res.status(response.status);
 
       return res.send(html);
     }
 
-    /*
-     * Everything else:
-     *
-     * JS
-     * CSS
-     * images
-     * fonts
-     * videos
-     * JSON
-     * Elementor assets
-     */
+    // CSS, JS, images, fonts, videos, JSON, etc.
     const buffer = Buffer.from(
       await response.arrayBuffer()
     );
@@ -140,7 +162,10 @@ export default async function handler(req, res) {
     return res.send(buffer);
 
   } catch (error) {
-    console.error(error);
+    console.error(
+      "WordPress proxy error:",
+      error
+    );
 
     return res.status(502).json({
       error: "WordPress proxy failed"
