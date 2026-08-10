@@ -1,73 +1,132 @@
 export default async function handler(req, res) {
-  const source = 'https://magenta-caterpillar-505539.hostingersite.com';
-  const target = 'https://mymaxclinic.sg';
+  const ORIGIN = "https://magenta-caterpillar-505539.hostingersite.com";
 
-  const url = new URL(req.url, `https://${req.headers.host}`);
-  const targetUrl = source + url.pathname + url.search;
+  const incomingUrl = new URL(
+    req.url,
+    `https://${req.headers.host}`
+  );
+
+  const targetUrl =
+    ORIGIN +
+    incomingUrl.pathname +
+    incomingUrl.search;
 
   try {
+    const headers = new Headers();
+
+    // Forward important browser headers
+    if (req.headers["user-agent"]) {
+      headers.set("user-agent", req.headers["user-agent"]);
+    }
+
+    if (req.headers.accept) {
+      headers.set("accept", req.headers.accept);
+    }
+
+    if (req.headers["accept-language"]) {
+      headers.set(
+        "accept-language",
+        req.headers["accept-language"]
+      );
+    }
+
+    if (req.headers.cookie) {
+      headers.set("cookie", req.headers.cookie);
+    }
+
+    if (req.headers.referer) {
+      headers.set("referer", req.headers.referer);
+    }
+
     const response = await fetch(targetUrl, {
       method: req.method,
-      headers: {
-        'User-Agent': req.headers['user-agent'] || 'Mozilla/5.0',
-        'Accept': req.headers.accept || '*/*',
-      },
-      redirect: 'manual',
+      headers,
+      redirect: "manual"
     });
 
-    const contentType = response.headers.get('content-type') || '';
+    // Copy response headers
+    response.headers.forEach((value, key) => {
+      const blocked = [
+        "content-encoding",
+        "content-length",
+        "transfer-encoding",
+        "connection"
+      ];
+
+      if (!blocked.includes(key.toLowerCase())) {
+        res.setHeader(key, value);
+      }
+    });
 
     // Handle redirects
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location');
+    if (
+      response.status >= 300 &&
+      response.status < 400
+    ) {
+      const location = response.headers.get("location");
 
       if (location) {
-        const newLocation = location
-          .replace(source, target)
-          .replace(
-            'http://magenta-caterpillar-505539.hostingersite.com',
-            target
-          );
+        const newLocation = location.replace(
+          ORIGIN,
+          "https://mymaxclinic.sg"
+        );
 
         res.status(response.status);
-        res.setHeader('Location', newLocation);
+        res.setHeader("Location", newLocation);
         return res.end();
       }
     }
 
-    // IMPORTANT:
-    // Only modify HTML.
-    // Images, CSS, JS, fonts, etc. must be returned as binary data.
+    const contentType =
+      response.headers.get("content-type") || "";
+
+    /*
+     * HTML:
+     * Replace old WordPress domain with
+     * the public Vercel/domain URL.
+     */
     if (
-      contentType.includes('text/html') ||
-      contentType.includes('application/xhtml+xml')
+      contentType.includes("text/html") ||
+      contentType.includes("application/xhtml+xml")
     ) {
       let html = await response.text();
 
       html = html
-        .replaceAll(source, target)
         .replaceAll(
-          'http://magenta-caterpillar-505539.hostingersite.com',
-          target
+          "https://magenta-caterpillar-505539.hostingersite.com",
+          "https://mymaxclinic.sg"
+        )
+        .replaceAll(
+          "http://magenta-caterpillar-505539.hostingersite.com",
+          "https://mymaxclinic.sg"
+        )
+        .replaceAll(
+          "//magenta-caterpillar-505539.hostingersite.com",
+          "//mymaxclinic.sg"
         );
 
       res.status(response.status);
-      res.setHeader('Content-Type', contentType);
-
       return res.send(html);
     }
 
-    // For images, CSS, JS, fonts, JSON, etc.
-    // Return the original bytes without modifying them.
-    const buffer = Buffer.from(await response.arrayBuffer());
+    /*
+     * CSS, JS, images, fonts, videos,
+     * JSON, etc.
+     *
+     * DO NOT convert these to text.
+     */
+    const data = Buffer.from(
+      await response.arrayBuffer()
+    );
 
     res.status(response.status);
-    res.setHeader('Content-Type', contentType);
-
-    return res.send(buffer);
+    return res.send(data);
 
   } catch (error) {
-    console.error(error);
-    return res.status(500).send('Proxy error');
+    console.error("Proxy error:", error);
+
+    return res.status(502).json({
+      error: "Proxy request failed"
+    });
   }
 }
