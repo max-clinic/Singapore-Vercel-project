@@ -1,44 +1,46 @@
 export default async function handler(req, res) {
-  const ORIGIN = "https://magenta-caterpillar-505539.hostingersite.com";
+  const WP_ORIGIN =
+    "https://magenta-caterpillar-505539.hostingersite.com";
 
-  const incomingUrl = new URL(
+  const PUBLIC_ORIGIN =
+    "https://mymaxclinic.sg";
+
+  const incoming = new URL(
     req.url,
     `https://${req.headers.host}`
   );
 
-  const targetUrl =
-    ORIGIN +
-    incomingUrl.pathname +
-    incomingUrl.search;
+  const target =
+    WP_ORIGIN +
+    incoming.pathname +
+    incoming.search;
 
   try {
     const headers = new Headers();
 
-    // Forward important browser headers
-    if (req.headers["user-agent"]) {
-      headers.set("user-agent", req.headers["user-agent"]);
+    // Forward browser headers
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (
+        value &&
+        ![
+          "host",
+          "connection",
+          "content-length"
+        ].includes(key.toLowerCase())
+      ) {
+        headers.set(
+          key,
+          Array.isArray(value) ? value.join(",") : value
+        );
+      }
     }
 
-    if (req.headers.accept) {
-      headers.set("accept", req.headers.accept);
-    }
+    // Tell WordPress which public domain the visitor is using
+    headers.set("Host", new URL(WP_ORIGIN).host);
+    headers.set("X-Forwarded-Host", "mymaxclinic.sg");
+    headers.set("X-Forwarded-Proto", "https");
 
-    if (req.headers["accept-language"]) {
-      headers.set(
-        "accept-language",
-        req.headers["accept-language"]
-      );
-    }
-
-    if (req.headers.cookie) {
-      headers.set("cookie", req.headers.cookie);
-    }
-
-    if (req.headers.referer) {
-      headers.set("referer", req.headers.referer);
-    }
-
-    const response = await fetch(targetUrl, {
+    const response = await fetch(target, {
       method: req.method,
       headers,
       redirect: "manual"
@@ -46,19 +48,23 @@ export default async function handler(req, res) {
 
     // Copy response headers
     response.headers.forEach((value, key) => {
-      const blocked = [
-        "content-encoding",
-        "content-length",
-        "transfer-encoding",
-        "connection"
-      ];
+      const lower = key.toLowerCase();
 
-      if (!blocked.includes(key.toLowerCase())) {
+      if (
+        ![
+          "content-length",
+          "content-encoding",
+          "transfer-encoding",
+          "connection"
+        ].includes(lower)
+      ) {
         res.setHeader(key, value);
       }
     });
 
-    // Handle redirects
+    /*
+     * Redirect handling
+     */
     if (
       response.status >= 300 &&
       response.status < 400
@@ -66,13 +72,16 @@ export default async function handler(req, res) {
       const location = response.headers.get("location");
 
       if (location) {
-        const newLocation = location.replace(
-          ORIGIN,
-          "https://mymaxclinic.sg"
-        );
+        const fixedLocation = location
+          .replaceAll(WP_ORIGIN, PUBLIC_ORIGIN)
+          .replaceAll(
+            "http://magenta-caterpillar-505539.hostingersite.com",
+            PUBLIC_ORIGIN
+          );
 
         res.status(response.status);
-        res.setHeader("Location", newLocation);
+        res.setHeader("Location", fixedLocation);
+
         return res.end();
       }
     }
@@ -81,9 +90,7 @@ export default async function handler(req, res) {
       response.headers.get("content-type") || "";
 
     /*
-     * HTML:
-     * Replace old WordPress domain with
-     * the public Vercel/domain URL.
+     * HTML
      */
     if (
       contentType.includes("text/html") ||
@@ -92,41 +99,51 @@ export default async function handler(req, res) {
       let html = await response.text();
 
       html = html
-        .replaceAll(
-          "https://magenta-caterpillar-505539.hostingersite.com",
-          "https://mymaxclinic.sg"
-        )
+        .replaceAll(WP_ORIGIN, PUBLIC_ORIGIN)
         .replaceAll(
           "http://magenta-caterpillar-505539.hostingersite.com",
-          "https://mymaxclinic.sg"
+          PUBLIC_ORIGIN
         )
         .replaceAll(
           "//magenta-caterpillar-505539.hostingersite.com",
           "//mymaxclinic.sg"
         );
 
+      // Fix WordPress-generated URLs
+      html = html.replaceAll(
+        'href="/wp-',
+        `href="${PUBLIC_ORIGIN}/wp-`
+      );
+
       res.status(response.status);
+
       return res.send(html);
     }
 
     /*
-     * CSS, JS, images, fonts, videos,
-     * JSON, etc.
+     * Everything else:
      *
-     * DO NOT convert these to text.
+     * JS
+     * CSS
+     * images
+     * fonts
+     * videos
+     * JSON
+     * Elementor assets
      */
-    const data = Buffer.from(
+    const buffer = Buffer.from(
       await response.arrayBuffer()
     );
 
     res.status(response.status);
-    return res.send(data);
+
+    return res.send(buffer);
 
   } catch (error) {
-    console.error("Proxy error:", error);
+    console.error(error);
 
     return res.status(502).json({
-      error: "Proxy request failed"
+      error: "WordPress proxy failed"
     });
   }
 }
