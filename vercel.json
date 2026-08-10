@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "https://magenta-caterpillar-505539.hostingersite.com/$1"
+    }
+  ]
+}
