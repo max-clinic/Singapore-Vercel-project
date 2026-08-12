@@ -18,7 +18,9 @@ export default async function handler(req, res) {
 
     const headers = new Headers();
 
+    // -----------------------------------
     // Forward request headers
+    // -----------------------------------
     for (const [key, value] of Object.entries(req.headers)) {
       const lower = key.toLowerCase();
 
@@ -40,7 +42,9 @@ export default async function handler(req, res) {
       }
     }
 
-    // IMPORTANT
+    // -----------------------------------
+    // Hostinger / WordPress host
+    // -----------------------------------
     headers.set(
       "Host",
       "magenta-caterpillar-505539.hostingersite.com"
@@ -56,9 +60,12 @@ export default async function handler(req, res) {
       "https"
     );
 
-    // Don't send compressed responses to the proxy.
+    // Prevent compressed upstream responses
     headers.delete("accept-encoding");
 
+    // -----------------------------------
+    // Prepare request body
+    // -----------------------------------
     let body;
 
     if (
@@ -68,6 +75,9 @@ export default async function handler(req, res) {
       const contentType =
         req.headers["content-type"] || "";
 
+      // -----------------------------------
+      // Form URL encoded
+      // -----------------------------------
       if (
         contentType.includes(
           "application/x-www-form-urlencoded"
@@ -82,7 +92,10 @@ export default async function handler(req, res) {
             new URLSearchParams();
 
           if (req.body) {
-            for (const [key, value] of Object.entries(req.body)) {
+            for (
+              const [key, value]
+              of Object.entries(req.body)
+            ) {
               if (Array.isArray(value)) {
                 value.forEach((item) => {
                   params.append(
@@ -104,70 +117,134 @@ export default async function handler(req, res) {
 
           body = params.toString();
         }
-      } else if (
-        contentType.includes("application/json")
+      }
+
+      // -----------------------------------
+      // JSON
+      // -----------------------------------
+      else if (
+        contentType.includes(
+          "application/json"
+        )
       ) {
         body =
           typeof req.body === "string"
             ? req.body
-            : JSON.stringify(req.body || {});
-      } else if (
+            : JSON.stringify(
+                req.body || {}
+              );
+      }
+
+      // -----------------------------------
+      // Other requests
+      // -----------------------------------
+      else if (
         typeof req.body === "string"
       ) {
         body = req.body;
-      } else if (req.body) {
-        body = JSON.stringify(req.body);
+      }
+
+      else if (req.body) {
+        body = JSON.stringify(
+          req.body
+        );
       }
     }
 
-    const response = await fetch(target, {
-      method: req.method,
-      headers,
-      body,
-      redirect: "manual"
-    });
-
-    // Copy response headers
-    response.headers.forEach((value, key) => {
-      const lower = key.toLowerCase();
-
-      if (
-        ![
-          "content-length",
-          "content-encoding",
-          "transfer-encoding",
-          "connection"
-        ].includes(lower)
-      ) {
-        res.setHeader(key, value);
+    // -----------------------------------
+    // Request WordPress
+    // -----------------------------------
+    const response = await fetch(
+      target,
+      {
+        method: req.method,
+        headers,
+        body,
+        redirect: "manual"
       }
-    });
+    );
 
-    // Redirects
+    // -----------------------------------
+    // Copy response headers
+    // -----------------------------------
+    response.headers.forEach(
+      (value, key) => {
+        const lower =
+          key.toLowerCase();
+
+        if (
+          ![
+            "content-length",
+            "content-encoding",
+            "transfer-encoding",
+            "connection"
+          ].includes(lower)
+        ) {
+          res.setHeader(
+            key,
+            value
+          );
+        }
+      }
+    );
+
+    // ===================================
+    // REDIRECT HANDLING
+    // ===================================
     if (
       response.status >= 300 &&
       response.status < 400
     ) {
       const location =
-        response.headers.get("location");
+        response.headers.get(
+          "location"
+        );
 
       if (location) {
+
         const fixedLocation =
           location
+
+            // www + https
             .replaceAll(
-              WP_ORIGIN,
+              "https://www.magenta-caterpillar-505539.hostingersite.com",
               PUBLIC_ORIGIN
             )
+
+            // www + http
+            .replaceAll(
+              "http://www.magenta-caterpillar-505539.hostingersite.com",
+              PUBLIC_ORIGIN
+            )
+
+            // normal https
+            .replaceAll(
+              "https://magenta-caterpillar-505539.hostingersite.com",
+              PUBLIC_ORIGIN
+            )
+
+            // normal http
             .replaceAll(
               "http://magenta-caterpillar-505539.hostingersite.com",
               PUBLIC_ORIGIN
             )
+
+            // protocol-relative www
             .replaceAll(
-              "https://magenta-caterpillar-505539.hostingersite.com",
-              PUBLIC_ORIGIN
+              "//www.magenta-caterpillar-505539.hostingersite.com",
+              "//www.mymaxclinic.sg"
+            )
+
+            // protocol-relative normal
+            .replaceAll(
+              "//magenta-caterpillar-505539.hostingersite.com",
+              "//www.mymaxclinic.sg"
             );
 
-        res.status(response.status);
+        res.status(
+          response.status
+        );
+
         res.setHeader(
           "Location",
           fixedLocation
@@ -177,52 +254,105 @@ export default async function handler(req, res) {
       }
     }
 
+    // -----------------------------------
+    // Content type
+    // -----------------------------------
     const contentType =
-      response.headers.get("content-type") || "";
+      response.headers.get(
+        "content-type"
+      ) || "";
 
-    // HTML
+    // ===================================
+    // HTML RESPONSE
+    // ===================================
     if (
-      contentType.includes("text/html") ||
-      contentType.includes("application/xhtml+xml")
+      contentType.includes(
+        "text/html"
+      ) ||
+      contentType.includes(
+        "application/xhtml+xml"
+      )
     ) {
-      let html = await response.text();
+      let html =
+        await response.text();
 
-      html = html
-        .replaceAll(
-          WP_ORIGIN,
-          PUBLIC_ORIGIN
-        )
-        .replaceAll(
-          "http://magenta-caterpillar-505539.hostingersite.com",
-          PUBLIC_ORIGIN
-        )
-        .replaceAll(
-          "//magenta-caterpillar-505539.hostingersite.com",
-          "//www.mymaxclinic.sg"
-        );
+      // -----------------------------------
+      // Replace Hostinger URLs with Vercel
+      // -----------------------------------
 
-      res.status(response.status);
+      // HTTPS + www
+      html = html.replaceAll(
+        "https://www.magenta-caterpillar-505539.hostingersite.com",
+        PUBLIC_ORIGIN
+      );
+
+      // HTTP + www
+      html = html.replaceAll(
+        "http://www.magenta-caterpillar-505539.hostingersite.com",
+        PUBLIC_ORIGIN
+      );
+
+      // HTTPS without www
+      html = html.replaceAll(
+        "https://magenta-caterpillar-505539.hostingersite.com",
+        PUBLIC_ORIGIN
+      );
+
+      // HTTP without www
+      html = html.replaceAll(
+        "http://magenta-caterpillar-505539.hostingersite.com",
+        PUBLIC_ORIGIN
+      );
+
+      // Protocol-relative + www
+      html = html.replaceAll(
+        "//www.magenta-caterpillar-505539.hostingersite.com",
+        "//www.mymaxclinic.sg"
+      );
+
+      // Protocol-relative without www
+      html = html.replaceAll(
+        "//magenta-caterpillar-505539.hostingersite.com",
+        "//www.mymaxclinic.sg"
+      );
+
+      res.status(
+        response.status
+      );
+
       return res.send(html);
     }
 
-    // Everything else
+    // ===================================
+    // JSON / CSS / JS / Images / Fonts
+    // ===================================
     const buffer =
       Buffer.from(
         await response.arrayBuffer()
       );
 
-    res.status(response.status);
-    return res.send(buffer);
+    res.status(
+      response.status
+    );
+
+    return res.send(
+      buffer
+    );
 
   } catch (error) {
+
     console.error(
       "WordPress proxy error:",
       error
     );
 
-    return res.status(502).json({
-      error: "WordPress proxy failed",
-      message: error.message
+    return res.status(
+      502
+    ).json({
+      error:
+        "WordPress proxy failed",
+      message:
+        error.message
     });
   }
 }
