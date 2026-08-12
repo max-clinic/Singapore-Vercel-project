@@ -1,9 +1,3 @@
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
-
 export default async function handler(req, res) {
   const WP_ORIGIN =
     "https://magenta-caterpillar-505539.hostingersite.com";
@@ -22,38 +16,16 @@ export default async function handler(req, res) {
       incoming.pathname +
       incoming.search;
 
-    // -----------------------------
-    // Read raw request body
-    // -----------------------------
-    let body;
-
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      const chunks = [];
-
-      for await (const chunk of req) {
-        chunks.push(
-          Buffer.isBuffer(chunk)
-            ? chunk
-            : Buffer.from(chunk)
-        );
-      }
-
-      body = Buffer.concat(chunks);
-    }
-
-    // -----------------------------
-    // Forward headers
-    // -----------------------------
     const headers = new Headers();
 
+    // Forward request headers
     for (const [key, value] of Object.entries(req.headers)) {
       if (
         value &&
         ![
           "host",
           "connection",
-          "content-length",
-          "transfer-encoding"
+          "content-length"
         ].includes(key.toLowerCase())
       ) {
         headers.set(
@@ -65,6 +37,7 @@ export default async function handler(req, res) {
       }
     }
 
+    // Tell WordPress the real origin
     headers.set(
       "Host",
       new URL(WP_ORIGIN).host
@@ -80,23 +53,27 @@ export default async function handler(req, res) {
       "https"
     );
 
-    // -----------------------------
-    // Send request to WordPress
-    // -----------------------------
+    // Forward request body for POST/PUT/PATCH
+    let body = undefined;
+
+    if (
+      req.method !== "GET" &&
+      req.method !== "HEAD"
+    ) {
+      if (req.body) {
+        body = req.body;
+      }
+    }
+
+    // Request WordPress
     const response = await fetch(target, {
       method: req.method,
       headers,
-      body:
-        req.method === "GET" ||
-        req.method === "HEAD"
-          ? undefined
-          : body,
-      redirect: "manual",
+      body,
+      redirect: "manual"
     });
 
-    // -----------------------------
     // Copy response headers
-    // -----------------------------
     response.headers.forEach((value, key) => {
       const lower = key.toLowerCase();
 
@@ -112,9 +89,7 @@ export default async function handler(req, res) {
       }
     });
 
-    // -----------------------------
     // Handle redirects
-    // -----------------------------
     if (
       response.status >= 300 &&
       response.status < 400
@@ -123,19 +98,20 @@ export default async function handler(req, res) {
         response.headers.get("location");
 
       if (location) {
-        const fixedLocation = location
-          .replaceAll(
-            WP_ORIGIN,
-            PUBLIC_ORIGIN
-          )
-          .replaceAll(
-            "http://magenta-caterpillar-505539.hostingersite.com",
-            PUBLIC_ORIGIN
-          )
-          .replaceAll(
-            "https://magenta-caterpillar-505539.hostingersite.com",
-            PUBLIC_ORIGIN
-          );
+        const fixedLocation =
+          location
+            .replaceAll(
+              WP_ORIGIN,
+              PUBLIC_ORIGIN
+            )
+            .replaceAll(
+              "http://magenta-caterpillar-505539.hostingersite.com",
+              PUBLIC_ORIGIN
+            )
+            .replaceAll(
+              "https://magenta-caterpillar-505539.hostingersite.com",
+              PUBLIC_ORIGIN
+            );
 
         res.status(response.status);
 
@@ -148,15 +124,10 @@ export default async function handler(req, res) {
       }
     }
 
-    // -----------------------------
-    // Response content type
-    // -----------------------------
     const contentType =
       response.headers.get("content-type") || "";
 
-    // -----------------------------
-    // HTML response
-    // -----------------------------
+    // HTML
     if (
       contentType.includes("text/html") ||
       contentType.includes("application/xhtml+xml")
@@ -182,9 +153,7 @@ export default async function handler(req, res) {
       return res.send(html);
     }
 
-    // -----------------------------
-    // JSON / CSS / JS / images / etc.
-    // -----------------------------
+    // CSS, JS, images, fonts, videos, JSON, etc.
     const buffer = Buffer.from(
       await response.arrayBuffer()
     );
@@ -200,8 +169,7 @@ export default async function handler(req, res) {
     );
 
     return res.status(502).json({
-      error: "WordPress proxy failed",
-      message: error.message,
+      error: "WordPress proxy failed"
     });
   }
 }
