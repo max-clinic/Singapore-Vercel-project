@@ -18,9 +18,7 @@ export default async function handler(req, res) {
 
     const headers = new Headers();
 
-    // -----------------------------------
     // Forward request headers
-    // -----------------------------------
     for (const [key, value] of Object.entries(req.headers)) {
       const lower = key.toLowerCase();
 
@@ -42,17 +40,15 @@ export default async function handler(req, res) {
       }
     }
 
-    // -----------------------------------
-    // Tell WordPress about the real host
-    // -----------------------------------
+    // IMPORTANT
     headers.set(
       "Host",
-      new URL(WP_ORIGIN).host
+      "magenta-caterpillar-505539.hostingersite.com"
     );
 
     headers.set(
       "X-Forwarded-Host",
-      new URL(PUBLIC_ORIGIN).host
+      "www.mymaxclinic.sg"
     );
 
     headers.set(
@@ -60,10 +56,10 @@ export default async function handler(req, res) {
       "https"
     );
 
-    // -----------------------------------
-    // Prepare request body
-    // -----------------------------------
-    let body = undefined;
+    // Don't send compressed responses to the proxy.
+    headers.delete("accept-encoding");
+
+    let body;
 
     if (
       req.method !== "GET" &&
@@ -72,9 +68,6 @@ export default async function handler(req, res) {
       const contentType =
         req.headers["content-type"] || "";
 
-      // --------------------------------
-      // application/x-www-form-urlencoded
-      // --------------------------------
       if (
         contentType.includes(
           "application/x-www-form-urlencoded"
@@ -84,125 +77,79 @@ export default async function handler(req, res) {
           typeof req.body === "string"
         ) {
           body = req.body;
-        } else if (
-          Buffer.isBuffer(req.body)
-        ) {
-          body = req.body;
-        } else if (
-          req.body &&
-          typeof req.body === "object"
-        ) {
-          const params = new URLSearchParams();
+        } else {
+          const params =
+            new URLSearchParams();
 
-          for (const [key, value] of Object.entries(
-            req.body
-          )) {
-            if (Array.isArray(value)) {
-              for (const item of value) {
+          if (req.body) {
+            for (const [key, value] of Object.entries(req.body)) {
+              if (Array.isArray(value)) {
+                value.forEach((item) => {
+                  params.append(
+                    key,
+                    String(item)
+                  );
+                });
+              } else if (
+                value !== undefined &&
+                value !== null
+              ) {
                 params.append(
                   key,
-                  String(item)
+                  String(value)
                 );
               }
-            } else if (value !== undefined && value !== null) {
-              params.append(
-                key,
-                String(value)
-              );
             }
           }
 
           body = params.toString();
         }
-      }
-
-      // --------------------------------
-      // application/json
-      // --------------------------------
-      else if (
-        contentType.includes(
-          "application/json"
-        )
+      } else if (
+        contentType.includes("application/json")
       ) {
-        if (
+        body =
           typeof req.body === "string"
-        ) {
-          body = req.body;
-        } else {
-          body = JSON.stringify(
-            req.body || {}
-          );
-        }
-      }
-
-      // --------------------------------
-      // Other request types
-      // --------------------------------
-      else {
-        if (
-          typeof req.body === "string"
-        ) {
-          body = req.body;
-        } else if (
-          Buffer.isBuffer(req.body)
-        ) {
-          body = req.body;
-        } else if (req.body) {
-          body = JSON.stringify(
-            req.body
-          );
-        }
+            ? req.body
+            : JSON.stringify(req.body || {});
+      } else if (
+        typeof req.body === "string"
+      ) {
+        body = req.body;
+      } else if (req.body) {
+        body = JSON.stringify(req.body);
       }
     }
 
-    // -----------------------------------
-    // Send request to WordPress
-    // -----------------------------------
-    const response = await fetch(
-      target,
-      {
-        method: req.method,
-        headers,
-        body,
-        redirect: "manual"
-      }
-    );
+    const response = await fetch(target, {
+      method: req.method,
+      headers,
+      body,
+      redirect: "manual"
+    });
 
-    // -----------------------------------
     // Copy response headers
-    // -----------------------------------
-    response.headers.forEach(
-      (value, key) => {
-        const lower =
-          key.toLowerCase();
+    response.headers.forEach((value, key) => {
+      const lower = key.toLowerCase();
 
-        if (
-          ![
-            "content-length",
-            "content-encoding",
-            "transfer-encoding",
-            "connection"
-          ].includes(lower)
-        ) {
-          res.setHeader(
-            key,
-            value
-          );
-        }
+      if (
+        ![
+          "content-length",
+          "content-encoding",
+          "transfer-encoding",
+          "connection"
+        ].includes(lower)
+      ) {
+        res.setHeader(key, value);
       }
-    );
+    });
 
-    // -----------------------------------
-    // Handle redirects
-    // -----------------------------------
+    // Redirects
     if (
       response.status >= 300 &&
       response.status < 400
     ) {
       const location =
-        response.headers.get(
-          "location"
-        );
+        response.headers.get("location");
 
       if (location) {
         const fixedLocation =
@@ -220,10 +167,7 @@ export default async function handler(req, res) {
               PUBLIC_ORIGIN
             );
 
-        res.status(
-          response.status
-        );
-
+        res.status(response.status);
         res.setHeader(
           "Location",
           fixedLocation
@@ -233,27 +177,15 @@ export default async function handler(req, res) {
       }
     }
 
-    // -----------------------------------
-    // Get response content type
-    // -----------------------------------
     const contentType =
-      response.headers.get(
-        "content-type"
-      ) || "";
+      response.headers.get("content-type") || "";
 
-    // -----------------------------------
     // HTML
-    // -----------------------------------
     if (
-      contentType.includes(
-        "text/html"
-      ) ||
-      contentType.includes(
-        "application/xhtml+xml"
-      )
+      contentType.includes("text/html") ||
+      contentType.includes("application/xhtml+xml")
     ) {
-      let html =
-        await response.text();
+      let html = await response.text();
 
       html = html
         .replaceAll(
@@ -269,25 +201,17 @@ export default async function handler(req, res) {
           "//www.mymaxclinic.sg"
         );
 
-      res.status(
-        response.status
-      );
-
+      res.status(response.status);
       return res.send(html);
     }
 
-    // -----------------------------------
-    // JSON / CSS / JS / images / etc.
-    // -----------------------------------
+    // Everything else
     const buffer =
       Buffer.from(
         await response.arrayBuffer()
       );
 
-    res.status(
-      response.status
-    );
-
+    res.status(response.status);
     return res.send(buffer);
 
   } catch (error) {
