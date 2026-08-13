@@ -28,7 +28,32 @@ export default async function handler(req, res) {
       WP_ORIGIN +
       incoming.pathname +
       incoming.search;
+    // =================================================
+// ROBOTS.TXT
+// =================================================
 
+if (incoming.pathname === "/robots.txt") {
+  res.status(200);
+
+  res.setHeader(
+    "Content-Type",
+    "text/plain; charset=utf-8"
+  );
+
+  return res.send(
+`User-agent: *
+Allow: /
+
+Disallow: /wp-admin/
+Allow: /wp-admin/admin-ajax.php
+
+Disallow: /wp-login.php
+Disallow: /?s=
+Disallow: /search/
+
+Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
+  );
+}
     // =================================================
     // REQUEST HEADERS
     // =================================================
