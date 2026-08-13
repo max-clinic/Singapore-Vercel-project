@@ -5,160 +5,16 @@ export default async function handler(req, res) {
   const WP_HOST =
     "magenta-caterpillar-505539.hostingersite.com";
 
-  const WP_WWW_HOST =
-    "www.magenta-caterpillar-505539.hostingersite.com";
-
   const PUBLIC_ORIGIN =
     "https://www.mymaxclinic.sg";
 
   const PUBLIC_HOST =
     "www.mymaxclinic.sg";
 
-  // =========================================================
-  // ALLOWED CORS ORIGINS
-  // =========================================================
-
-  const ALLOWED_ORIGIN_PATTERN =
-    /^https:\/\/[a-z0-9-]+-max-clinic-projects\.vercel\.app$/i;
-
-  function getAllowedOrigin(origin) {
-    if (!origin) {
-      return PUBLIC_ORIGIN;
-    }
-
-    if (origin === PUBLIC_ORIGIN) {
-      return PUBLIC_ORIGIN;
-    }
-
-    if (ALLOWED_ORIGIN_PATTERN.test(origin)) {
-      return origin;
-    }
-
-    return PUBLIC_ORIGIN;
-  }
-
-  // =========================================================
-  // REWRITE WORDPRESS URLS
-  // =========================================================
-
-  function rewriteUrls(value) {
-    if (value === undefined || value === null) {
-      return value;
-    }
-
-    let result = String(value);
-
-    // HTTPS absolute URLs
-    result = result.replaceAll(
-      `https://${WP_WWW_HOST}`,
-      PUBLIC_ORIGIN
-    );
-
-    result = result.replaceAll(
-      `https://${WP_HOST}`,
-      PUBLIC_ORIGIN
-    );
-
-    // HTTP absolute URLs
-    result = result.replaceAll(
-      `http://${WP_WWW_HOST}`,
-      PUBLIC_ORIGIN
-    );
-
-    result = result.replaceAll(
-      `http://${WP_HOST}`,
-      PUBLIC_ORIGIN
-    );
-
-    // Protocol relative URLs
-    result = result.replaceAll(
-      `//${WP_WWW_HOST}`,
-      `//${PUBLIC_HOST}`
-    );
-
-    result = result.replaceAll(
-      `//${WP_HOST}`,
-      `//${PUBLIC_HOST}`
-    );
-
-    // JSON escaped HTTPS
-    result = result.replaceAll(
-      `https:\\/\\/${WP_WWW_HOST}`,
-      `https:\\/\\/${PUBLIC_HOST}`
-    );
-
-    result = result.replaceAll(
-      `https:\\/\\/${WP_HOST}`,
-      `https:\\/\\/${PUBLIC_HOST}`
-    );
-
-    // JSON escaped HTTP
-    result = result.replaceAll(
-      `http:\\/\\/${WP_WWW_HOST}`,
-      `https:\\/\\/${PUBLIC_HOST}`
-    );
-
-    result = result.replaceAll(
-      `http:\\/\\/${WP_HOST}`,
-      `https:\\/\\/${PUBLIC_HOST}`
-    );
-
-    // Escaped protocol-relative URLs
-    result = result.replaceAll(
-      `\\/\\/${WP_WWW_HOST}`,
-      `\\/\\/${PUBLIC_HOST}`
-    );
-
-    result = result.replaceAll(
-      `\\/\\/${WP_HOST}`,
-      `\\/\\/${PUBLIC_HOST}`
-    );
-
-    // Hostname-only occurrences
-    result = result.replaceAll(
-      WP_WWW_HOST,
-      PUBLIC_HOST
-    );
-
-    result = result.replaceAll(
-      WP_HOST,
-      PUBLIC_HOST
-    );
-
-    return result;
-  }
-
-  // =========================================================
-  // NORMALIZE REDIRECT
-  // =========================================================
-
-  function normalizeRedirect(location) {
-    if (!location) {
-      return location;
-    }
-
-    let result = rewriteUrls(location);
-
-    // Relative URL
-    if (
-      result.startsWith("/") &&
-      !result.startsWith("//")
-    ) {
-      result = PUBLIC_ORIGIN + result;
-    }
-
-    // Protocol-relative URL
-    if (result.startsWith("//")) {
-      result = "https:" + result;
-    }
-
-    return result;
-  }
-
   try {
-    // =======================================================
+    // =====================================================
     // INCOMING REQUEST
-    // =======================================================
+    // =====================================================
 
     const incoming = new URL(
       req.url,
@@ -167,50 +23,14 @@ export default async function handler(req, res) {
 
     const pathname = incoming.pathname;
 
-    // =======================================================
-    // ROBOTS.TXT
-    // =======================================================
-
-    if (pathname === "/robots.txt") {
-      res.status(200);
-
-      res.setHeader(
-        "Content-Type",
-        "text/plain; charset=utf-8"
-      );
-
-      res.setHeader(
-        "Cache-Control",
-        "public, max-age=3600"
-      );
-
-      return res.send(
-`User-agent: *
-Allow: /
-
-Disallow: /wp-admin/
-Allow: /wp-admin/admin-ajax.php
-
-Disallow: /wp-login.php
-Disallow: /?s=
-Disallow: /search/
-
-Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
-      );
-    }
-
-    // =======================================================
-    // WORDPRESS TARGET
-    // =======================================================
-
     const target =
       WP_ORIGIN +
       pathname +
       incoming.search;
 
-    // =======================================================
+    // =====================================================
     // REQUEST HEADERS
-    // =======================================================
+    // =====================================================
 
     const headers = new Headers();
 
@@ -244,7 +64,7 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       WP_HOST
     );
 
-    // Tell WordPress the public domain
+    // Public website
     headers.set(
       "X-Forwarded-Host",
       PUBLIC_HOST
@@ -260,49 +80,24 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       "443"
     );
 
-    // =======================================================
+    // =====================================================
     // AJAX
-    // =======================================================
+    // =====================================================
 
     const isAjax =
-      pathname === "/wp-admin/admin-ajax.php";
+      pathname ===
+      "/wp-admin/admin-ajax.php";
 
     if (isAjax) {
-      /*
-       * Keep the public origin.
-       * Do NOT replace the browser's Origin
-       * with the Hostinger origin.
-       */
-
-      headers.set(
-        "Origin",
-        req.headers.origin ||
-          PUBLIC_ORIGIN
-      );
-
-      headers.set(
-        "Referer",
-        req.headers.referer ||
-          PUBLIC_ORIGIN + "/"
-      );
-
       headers.set(
         "X-Requested-With",
         "XMLHttpRequest"
       );
     }
 
-    // =======================================================
-    // DISABLE UPSTREAM COMPRESSION
-    // =======================================================
-
-    headers.delete(
-      "accept-encoding"
-    );
-
-    // =======================================================
+    // =====================================================
     // REQUEST BODY
-    // =======================================================
+    // =====================================================
 
     let body;
 
@@ -310,17 +105,17 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       req.method !== "GET" &&
       req.method !== "HEAD"
     ) {
-      const contentType =
+      const requestContentType =
         String(
           req.headers["content-type"] || ""
         ).toLowerCase();
 
-      // -----------------------------------------------------
-      // FORM URL ENCODED
-      // -----------------------------------------------------
+      // -----------------------------------------------
+      // FORM DATA
+      // -----------------------------------------------
 
       if (
-        contentType.includes(
+        requestContentType.includes(
           "application/x-www-form-urlencoded"
         )
       ) {
@@ -348,14 +143,14 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
               if (
                 Array.isArray(value)
               ) {
-                for (
-                  const item of value
-                ) {
-                  params.append(
-                    key,
-                    String(item)
-                  );
-                }
+                value.forEach(
+                  (item) => {
+                    params.append(
+                      key,
+                      String(item)
+                    );
+                  }
+                );
               }
 
               else if (
@@ -375,12 +170,12 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         }
       }
 
-      // -----------------------------------------------------
+      // -----------------------------------------------
       // JSON
-      // -----------------------------------------------------
+      // -----------------------------------------------
 
       else if (
-        contentType.includes(
+        requestContentType.includes(
           "application/json"
         )
       ) {
@@ -392,26 +187,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
               );
       }
 
-      // -----------------------------------------------------
-      // MULTIPART
-      // -----------------------------------------------------
-
-      else if (
-        contentType.includes(
-          "multipart/form-data"
-        )
-      ) {
-        if (
-          typeof req.body === "string" ||
-          Buffer.isBuffer(req.body)
-        ) {
-          body = req.body;
-        }
-      }
-
-      // -----------------------------------------------------
+      // -----------------------------------------------
       // OTHER
-      // -----------------------------------------------------
+      // -----------------------------------------------
 
       else if (
         typeof req.body === "string"
@@ -435,9 +213,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       }
     }
 
-    // =======================================================
+    // =====================================================
     // REQUEST WORDPRESS
-    // =======================================================
+    // =====================================================
 
     const response =
       await fetch(
@@ -450,9 +228,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         }
       );
 
-    // =======================================================
+    // =====================================================
     // RESPONSE HEADERS
-    // =======================================================
+    // =====================================================
 
     response.headers.forEach(
       (value, key) => {
@@ -466,10 +244,7 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
             "transfer-encoding",
             "connection",
             "location",
-            "refresh",
-            "set-cookie",
-            "access-control-allow-origin",
-            "access-control-allow-credentials"
+            "set-cookie"
           ].includes(lower)
         ) {
           res.setHeader(
@@ -480,9 +255,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       }
     );
 
-    // =======================================================
+    // =====================================================
     // COOKIES
-    // =======================================================
+    // =====================================================
 
     if (
       typeof response.headers.getSetCookie ===
@@ -493,7 +268,7 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
 
       if (
         cookies &&
-        cookies.length > 0
+        cookies.length
       ) {
         res.setHeader(
           "Set-Cookie",
@@ -502,32 +277,13 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       }
     }
 
-    else {
-      const cookie =
-        response.headers.get(
-          "set-cookie"
-        );
-
-      if (cookie) {
-        res.setHeader(
-          "Set-Cookie",
-          cookie
-        );
-      }
-    }
-
-    // =======================================================
+    // =====================================================
     // CORS
-    // =======================================================
-
-    const requestOrigin =
-      req.headers.origin || "";
+    // =====================================================
 
     res.setHeader(
       "Access-Control-Allow-Origin",
-      getAllowedOrigin(
-        requestOrigin
-      )
+      PUBLIC_ORIGIN
     );
 
     res.setHeader(
@@ -550,24 +306,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       "Origin"
     );
 
-    // =======================================================
-    // NO CACHE FOR DYNAMIC REQUESTS
-    // =======================================================
-
-    if (
-      isAjax ||
-      pathname.startsWith("/wp-json/") ||
-      pathname === "/wp-login.php"
-    ) {
-      res.setHeader(
-        "Cache-Control",
-        "no-store, no-cache, must-revalidate, max-age=0"
-      );
-    }
-
-    // =======================================================
-    // OPTIONS
-    // =======================================================
+    // =====================================================
+    // PREFLIGHT
+    // =====================================================
 
     if (
       req.method === "OPTIONS"
@@ -577,9 +318,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         .end();
     }
 
-    // =======================================================
-    // HTTP REDIRECT
-    // =======================================================
+    // =====================================================
+    // REDIRECTS
+    // =====================================================
 
     if (
       response.status >= 300 &&
@@ -592,9 +333,15 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
 
       if (location) {
         location =
-          normalizeRedirect(
-            location
-          );
+          rewriteUrl(location);
+
+        if (
+          location.startsWith("/")
+        ) {
+          location =
+            PUBLIC_ORIGIN +
+            location;
+        }
 
         res.status(
           response.status
@@ -609,42 +356,26 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       }
     }
 
-    // =======================================================
-    // REFRESH REDIRECT
-    // =======================================================
+    // =====================================================
+    // RESPONSE CONTENT TYPE
+    // =====================================================
 
-    const refresh =
-      response.headers.get(
-        "refresh"
-      );
-
-    if (refresh) {
-      res.setHeader(
-        "Refresh",
-        rewriteUrls(refresh)
-      );
-    }
-
-    // =======================================================
-    // CONTENT TYPE
-    // =======================================================
-
-    const contentType =
+    const responseContentType =
       (
         response.headers.get(
           "content-type"
         ) || ""
       ).toLowerCase();
 
-    // =======================================================
+    // =====================================================
     // HTML
-    // =======================================================
+    // =====================================================
 
     if (
-      contentType.includes(
+      responseContentType.includes(
         "text/html"
       ) ||
-      contentType.includes(
+      responseContentType.includes(
         "application/xhtml+xml"
       )
     ) {
@@ -652,7 +383,7 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         await response.text();
 
       html =
-        rewriteUrls(html);
+        rewriteUrl(html);
 
       res.status(
         response.status
@@ -671,12 +402,12 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       );
     }
 
-    // =======================================================
+    // =====================================================
     // CSS
-    // =======================================================
+    // =====================================================
 
     if (
-      contentType.includes(
+      responseContentType.includes(
         "text/css"
       )
     ) {
@@ -684,7 +415,7 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         await response.text();
 
       css =
-        rewriteUrls(css);
+        rewriteUrl(css);
 
       res.status(
         response.status
@@ -703,26 +434,24 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       );
     }
 
-    // =======================================================
+    // =====================================================
     // JAVASCRIPT
-    // =======================================================
+    // =====================================================
 
     if (
-      contentType.includes(
+      responseContentType.includes(
         "javascript"
       ) ||
-      contentType.includes(
+      responseContentType.includes(
         "ecmascript"
       ) ||
-      pathname.endsWith(
-        ".js"
-      )
+      pathname.endsWith(".js")
     ) {
       let js =
         await response.text();
 
       js =
-        rewriteUrls(js);
+        rewriteUrl(js);
 
       res.status(
         response.status
@@ -741,76 +470,27 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       );
     }
 
-    // =======================================================
-    // XML
-    // =======================================================
+    // =====================================================
+    // JSON
+    // =====================================================
 
     if (
-      contentType.includes(
-        "xml"
-      ) ||
-      pathname.endsWith(
-        ".xml"
-      ) ||
-      pathname.endsWith(
-        ".xsl"
-      )
-    ) {
-      let xml =
-        await response.text();
-
-      xml =
-        rewriteUrls(xml);
-
-      res.status(
-        response.status
-      );
-
-      res.setHeader(
-        "Content-Type",
-        response.headers.get(
-          "content-type"
-        ) ||
-        "application/xml; charset=utf-8"
-      );
-
-      return res.send(
-        xml
-      );
-    }
-
-    // =======================================================
-    // JSON / FLUENT FORMS AJAX
-    // =======================================================
-
-    if (
-      contentType.includes(
+      responseContentType.includes(
         "application/json"
       ) ||
-      contentType.includes(
+      responseContentType.includes(
         "+json"
       )
     ) {
       let json =
         await response.text();
 
-      /*
-       * This is important for Fluent Forms.
-       *
-       * Fluent Forms can return:
-       *
-       * {
-       *   success: true,
-       *   redirectUrl:
-       *   "https://magenta-caterpillar-505539.hostingersite.com/thank-you/"
-       * }
-       *
-       * Rewrite the URL before the browser
-       * receives the JSON.
-       */
+      // IMPORTANT:
+      // Fluent Forms returns the redirect
+      // information inside JSON.
 
       json =
-        rewriteUrls(json);
+        rewriteUrl(json);
 
       res.status(
         response.status
@@ -829,9 +509,43 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       );
     }
 
-    // =======================================================
+    // =====================================================
+    // XML
+    // =====================================================
+
+    if (
+      responseContentType.includes(
+        "xml"
+      ) ||
+      pathname.endsWith(".xml") ||
+      pathname.endsWith(".xsl")
+    ) {
+      let xml =
+        await response.text();
+
+      xml =
+        rewriteUrl(xml);
+
+      res.status(
+        response.status
+      );
+
+      res.setHeader(
+        "Content-Type",
+        response.headers.get(
+          "content-type"
+        ) ||
+        "application/xml; charset=utf-8"
+      );
+
+      return res.send(
+        xml
+      );
+    }
+
+    // =====================================================
     // BINARY
-    // =======================================================
+    // =====================================================
 
     const buffer =
       Buffer.from(
@@ -860,5 +574,69 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         message:
           error.message
       });
+  }
+
+  // =====================================================
+  // URL REWRITE
+  // =====================================================
+
+  function rewriteUrl(value) {
+    if (!value) {
+      return value;
+    }
+
+    let result =
+      String(value);
+
+    // HTTPS
+    result =
+      result.replaceAll(
+        `https://${WP_HOST}`,
+        PUBLIC_ORIGIN
+      );
+
+    // HTTP
+    result =
+      result.replaceAll(
+        `http://${WP_HOST}`,
+        PUBLIC_ORIGIN
+      );
+
+    // Protocol relative
+    result =
+      result.replaceAll(
+        `//${WP_HOST}`,
+        `//${PUBLIC_HOST}`
+      );
+
+    // Escaped JSON HTTPS
+    result =
+      result.replaceAll(
+        `https:\\/\\/${WP_HOST}`,
+        `https:\\/\\/${PUBLIC_HOST}`
+      );
+
+    // Escaped JSON HTTP
+    result =
+      result.replaceAll(
+        `http:\\/\\/${WP_HOST}`,
+        `https:\\/\\/${PUBLIC_HOST}`
+      );
+
+    // Escaped protocol-relative
+    result =
+      result.replaceAll(
+        `\\/\\/${WP_HOST}`,
+        `\\/\\/${PUBLIC_HOST}`
+      );
+
+    // Host only
+    result =
+      result.replaceAll(
+        WP_HOST,
+        PUBLIC_HOST
+      );
+
+    return result;
   }
 }
