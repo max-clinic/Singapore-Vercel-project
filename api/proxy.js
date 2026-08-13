@@ -5,9 +5,6 @@ export default async function handler(req, res) {
   const WP_HOST =
     "magenta-caterpillar-505539.hostingersite.com";
 
-  const WP_WWW_HOST =
-    "www.magenta-caterpillar-505539.hostingersite.com";
-
   const PUBLIC_ORIGIN =
     "https://www.mymaxclinic.sg";
 
@@ -20,14 +17,44 @@ export default async function handler(req, res) {
       `https://${req.headers.host}`
     );
 
+    // =====================================================
+    // ROBOTS.TXT
+    // =====================================================
+
+    if (incoming.pathname === "/robots.txt") {
+      res.status(200);
+      res.setHeader(
+        "Content-Type",
+        "text/plain; charset=utf-8"
+      );
+
+      return res.send(
+`User-agent: *
+Allow: /
+
+Disallow: /wp-admin/
+Allow: /wp-admin/admin-ajax.php
+
+Disallow: /wp-login.php
+Disallow: /?s=
+Disallow: /search/
+
+Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
+      );
+    }
+
+    // =====================================================
+    // TARGET WORDPRESS URL
+    // =====================================================
+
     const target =
       WP_ORIGIN +
       incoming.pathname +
       incoming.search;
 
-    // =================================================
-    // REQUEST HEADERS
-    // =================================================
+    // =====================================================
+    // HEADERS
+    // =====================================================
 
     const headers = new Headers();
 
@@ -52,11 +79,11 @@ export default async function handler(req, res) {
       }
     }
 
-    headers.set(
-      "Host",
-      WP_HOST
-    );
+    // WordPress host
+    headers.set("Host", WP_HOST);
 
+    // IMPORTANT:
+    // Tell WordPress that the visitor is using the public domain.
     headers.set(
       "X-Forwarded-Host",
       PUBLIC_HOST
@@ -67,15 +94,25 @@ export default async function handler(req, res) {
       "https"
     );
 
-    // Do not request gzip/br from WordPress.
-    // This allows us to safely modify HTML/JSON.
-    headers.delete(
-      "accept-encoding"
-    );
+    // IMPORTANT FOR FLUENT FORMS / AJAX
+    if (incoming.pathname === "/wp-admin/admin-ajax.php") {
+      headers.set(
+        "Origin",
+        PUBLIC_ORIGIN
+      );
 
-    // =================================================
+      headers.set(
+        "Referer",
+        PUBLIC_ORIGIN + "/"
+      );
+    }
+
+    // Never request compressed response
+    headers.delete("accept-encoding");
+
+    // =====================================================
     // REQUEST BODY
-    // =================================================
+    // =====================================================
 
     let body;
 
@@ -91,9 +128,9 @@ export default async function handler(req, res) {
           "application/x-www-form-urlencoded"
         )
       ) {
-        if (
-          typeof req.body === "string"
-        ) {
+        if (typeof req.body === "string") {
+          body = req.body;
+        } else if (Buffer.isBuffer(req.body)) {
           body = req.body;
         } else {
           const params =
@@ -104,17 +141,13 @@ export default async function handler(req, res) {
               const [key, value]
               of Object.entries(req.body)
             ) {
-              if (
-                Array.isArray(value)
-              ) {
-                value.forEach(
-                  (item) => {
-                    params.append(
-                      key,
-                      String(item)
-                    );
-                  }
-                );
+              if (Array.isArray(value)) {
+                value.forEach((item) => {
+                  params.append(
+                    key,
+                    String(item)
+                  );
+                });
               } else if (
                 value !== undefined &&
                 value !== null
@@ -127,8 +160,7 @@ export default async function handler(req, res) {
             }
           }
 
-          body =
-            params.toString();
+          body = params.toString();
         }
       }
 
@@ -146,40 +178,48 @@ export default async function handler(req, res) {
       }
 
       else if (
-        typeof req.body === "string"
+        contentType.includes(
+          "multipart/form-data"
+        )
       ) {
-        body =
-          req.body;
+        if (typeof req.body === "string") {
+          body = req.body;
+        } else if (Buffer.isBuffer(req.body)) {
+          body = req.body;
+        }
       }
 
-      else if (
-        req.body
-      ) {
+      else if (typeof req.body === "string") {
+        body = req.body;
+      }
+
+      else if (Buffer.isBuffer(req.body)) {
+        body = req.body;
+      }
+
+      else if (req.body) {
         body =
-          JSON.stringify(
-            req.body
-          );
+          JSON.stringify(req.body);
       }
     }
 
-    // =================================================
-    // REQUEST WORDPRESS
-    // =================================================
+    // =====================================================
+    // CALL WORDPRESS
+    // =====================================================
 
-    const response =
-      await fetch(
-        target,
-        {
-          method: req.method,
-          headers,
-          body,
-          redirect: "manual"
-        }
-      );
+    const response = await fetch(
+      target,
+      {
+        method: req.method,
+        headers,
+        body,
+        redirect: "manual"
+      }
+    );
 
-    // =================================================
-    // RESPONSE HEADERS
-    // =================================================
+    // =====================================================
+    // COPY RESPONSE HEADERS
+    // =====================================================
 
     response.headers.forEach(
       (value, key) => {
@@ -202,9 +242,9 @@ export default async function handler(req, res) {
       }
     );
 
-    // =================================================
-    // HTTP REDIRECT
-    // =================================================
+    // =====================================================
+    // REDIRECT RESPONSE
+    // =====================================================
 
     if (
       response.status >= 300 &&
@@ -221,7 +261,6 @@ export default async function handler(req, res) {
             location
           );
 
-        // Relative redirect
         if (
           location.startsWith("/")
         ) {
@@ -243,37 +282,29 @@ export default async function handler(req, res) {
       }
     }
 
-    // =================================================
-    // CONTENT TYPE
-    // =================================================
+    // =====================================================
+    // RESPONSE CONTENT TYPE
+    // =====================================================
 
-    const contentType =
+    const responseContentType =
       response.headers.get(
         "content-type"
       ) || "";
 
-    // =================================================
+    // =====================================================
     // HTML
-    // =================================================
+    // =====================================================
 
     if (
-      contentType.includes(
+      responseContentType.includes(
         "text/html"
       ) ||
-      contentType.includes(
+      responseContentType.includes(
         "application/xhtml+xml"
       )
     ) {
       let html =
         await response.text();
-
-      /*
-       * IMPORTANT
-       *
-       * Replace normal URLs
-       * AND URLs escaped inside
-       * JavaScript/JSON.
-       */
 
       html =
         replaceAllWordPressUrls(
@@ -289,13 +320,47 @@ export default async function handler(req, res) {
       );
     }
 
-    // =================================================
-    // JSON
-    // =================================================
+    // =====================================================
+    // XML / SITEMAP
+    // =====================================================
 
     if (
-      contentType.includes(
+      responseContentType.includes("xml") ||
+      incoming.pathname.endsWith(".xml") ||
+      incoming.pathname.endsWith(".xsl")
+    ) {
+      let xml =
+        await response.text();
+
+      xml =
+        replaceAllWordPressUrls(
+          xml
+        );
+
+      res.status(
+        response.status
+      );
+
+      res.setHeader(
+        "Content-Type",
+        "text/xml; charset=UTF-8"
+      );
+
+      return res.send(
+        xml
+      );
+    }
+
+    // =====================================================
+    // JSON / FLUENT FORMS / ELEMENTOR AJAX
+    // =====================================================
+
+    if (
+      responseContentType.includes(
         "application/json"
+      ) ||
+      responseContentType.includes(
+        "+json"
       )
     ) {
       let json =
@@ -304,6 +369,34 @@ export default async function handler(req, res) {
       json =
         replaceAllWordPressUrls(
           json
+        );
+
+      // ---------------------------------------------------
+      // FLUENT FORMS REDIRECT FIX
+      // ---------------------------------------------------
+
+      json =
+        json.replaceAll(
+          WP_ORIGIN,
+          PUBLIC_ORIGIN
+        );
+
+      json =
+        json.replaceAll(
+          WP_HOST,
+          PUBLIC_HOST
+        );
+
+      json =
+        json.replaceAll(
+          `https:\\/\\/${WP_HOST}`,
+          `https:\\/\\/${PUBLIC_HOST}`
+        );
+
+      json =
+        json.replaceAll(
+          `https:\\/\\/${WP_HOST}`,
+          `https:\\/\\/${PUBLIC_HOST}`
         );
 
       res.status(
@@ -320,9 +413,9 @@ export default async function handler(req, res) {
       );
     }
 
-    // =================================================
+    // =====================================================
     // EVERYTHING ELSE
-    // =================================================
+    // =====================================================
 
     const buffer =
       Buffer.from(
@@ -344,9 +437,7 @@ export default async function handler(req, res) {
       error
     );
 
-    return res.status(
-      502
-    ).json({
+    return res.status(502).json({
       error:
         "WordPress proxy failed",
       message:
@@ -354,10 +445,9 @@ export default async function handler(req, res) {
     });
   }
 
-
-  // ===================================================
+  // =====================================================
   // REPLACE WORDPRESS URLS
-  // ===================================================
+  // =====================================================
 
   function replaceAllWordPressUrls(value) {
     if (!value) {
@@ -367,22 +457,7 @@ export default async function handler(req, res) {
     let result =
       String(value);
 
-    // -------------------------------------------------
-    // Normal URLs
-    // -------------------------------------------------
-
-    result =
-      result.replaceAll(
-        `https://${WP_WWW_HOST}`,
-        PUBLIC_ORIGIN
-      );
-
-    result =
-      result.replaceAll(
-        `http://${WP_WWW_HOST}`,
-        PUBLIC_ORIGIN
-      );
-
+    // HTTPS
     result =
       result.replaceAll(
         `https://${WP_HOST}`,
@@ -391,45 +466,37 @@ export default async function handler(req, res) {
 
     result =
       result.replaceAll(
+        `https://www.${WP_HOST}`,
+        PUBLIC_ORIGIN
+      );
+
+    // HTTP
+    result =
+      result.replaceAll(
         `http://${WP_HOST}`,
         PUBLIC_ORIGIN
       );
 
-    // -------------------------------------------------
-    // Protocol-relative URLs
-    // -------------------------------------------------
-
     result =
       result.replaceAll(
-        `//${WP_WWW_HOST}`,
-        `//${PUBLIC_HOST}`
+        `http://www.${WP_HOST}`,
+        PUBLIC_ORIGIN
       );
 
+    // Protocol-relative
     result =
       result.replaceAll(
         `//${WP_HOST}`,
         `//${PUBLIC_HOST}`
       );
 
-    // -------------------------------------------------
-    // Escaped JSON URLs
-    //
-    // Example:
-    // https:\/\/magenta...
-    // -------------------------------------------------
-
     result =
       result.replaceAll(
-        `https:\\/\\/${WP_WWW_HOST}`,
-        `https:\\/\\/${PUBLIC_HOST}`
+        `//www.${WP_HOST}`,
+        `//${PUBLIC_HOST}`
       );
 
-    result =
-      result.replaceAll(
-        `http:\\/\\/${WP_WWW_HOST}`,
-        `https:\\/\\/${PUBLIC_HOST}`
-      );
-
+    // Escaped HTTPS
     result =
       result.replaceAll(
         `https:\\/\\/${WP_HOST}`,
@@ -438,23 +505,33 @@ export default async function handler(req, res) {
 
     result =
       result.replaceAll(
+        `https:\\/\\/www.${WP_HOST}`,
+        `https:\\/\\/${PUBLIC_HOST}`
+      );
+
+    // Escaped HTTP
+    result =
+      result.replaceAll(
         `http:\\/\\/${WP_HOST}`,
         `https:\\/\\/${PUBLIC_HOST}`
       );
 
-    // -------------------------------------------------
-    // Escaped protocol-relative URLs
-    // -------------------------------------------------
-
     result =
       result.replaceAll(
-        `\\/\\/${WP_WWW_HOST}`,
+        `http:\\/\\/www.${WP_HOST}`,
+        `https:\\/\\/${PUBLIC_HOST}`
+      );
+
+    // Escaped protocol-relative
+    result =
+      result.replaceAll(
+        `\\/\\/${WP_HOST}`,
         `\\/\\/${PUBLIC_HOST}`
       );
 
     result =
       result.replaceAll(
-        `\\/\\/${WP_HOST}`,
+        `\\/\\/www.${WP_HOST}`,
         `\\/\\/${PUBLIC_HOST}`
       );
 
