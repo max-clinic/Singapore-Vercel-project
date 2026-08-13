@@ -15,10 +15,6 @@ export default async function handler(req, res) {
     "www.mymaxclinic.sg";
 
   try {
-    // =================================================
-    // INCOMING REQUEST
-    // =================================================
-
     const incoming = new URL(
       req.url,
       `https://${req.headers.host}`
@@ -28,20 +24,19 @@ export default async function handler(req, res) {
       WP_ORIGIN +
       incoming.pathname +
       incoming.search;
-    // =================================================
-// ROBOTS.TXT
-// =================================================
 
-if (incoming.pathname === "/robots.txt") {
-  res.status(200);
+    // =====================================================
+    // ROBOTS.TXT
+    // =====================================================
 
-  res.setHeader(
-    "Content-Type",
-    "text/plain; charset=utf-8"
-  );
+    if (incoming.pathname === "/robots.txt") {
+      res.status(200);
+      res.setHeader(
+        "Content-Type",
+        "text/plain; charset=utf-8"
+      );
 
-  return res.send(
-`User-agent: *
+      return res.send(`User-agent: *
 Allow: /
 
 Disallow: /wp-admin/
@@ -51,12 +46,12 @@ Disallow: /wp-login.php
 Disallow: /?s=
 Disallow: /search/
 
-Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
-  );
-}
-    // =================================================
+Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`);
+    }
+
+    // =====================================================
     // REQUEST HEADERS
-    // =================================================
+    // =====================================================
 
     const headers = new Headers();
 
@@ -81,14 +76,10 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
       }
     }
 
-    // Tell Hostinger that the request is going
-    // to the WordPress server.
-    headers.set(
-      "Host",
-      WP_HOST
-    );
+    // WordPress server host
+    headers.set("Host", WP_HOST);
 
-    // Tell WordPress the public domain.
+    // Tell WordPress the public domain
     headers.set(
       "X-Forwarded-Host",
       PUBLIC_HOST
@@ -99,36 +90,55 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
       "https"
     );
 
-    // Prevent gzip/br because we need to modify
-    // HTML, XML and JSON responses.
-    headers.delete(
-      "accept-encoding"
-    );
+    // =====================================================
+    // IMPORTANT FOR WORDPRESS / ELEMENTOR AJAX
+    // =====================================================
 
-    // =================================================
+    if (headers.has("origin")) {
+      headers.set(
+        "Origin",
+        WP_ORIGIN
+      );
+    }
+
+    if (headers.has("referer")) {
+      headers.set(
+        "Referer",
+        WP_ORIGIN + incoming.pathname
+      );
+    }
+
+    // Do not ask WordPress for compressed response.
+    headers.delete("accept-encoding");
+
+    // =====================================================
     // REQUEST BODY
-    // =================================================
+    // =====================================================
 
-    let body;
+    let body = undefined;
 
     if (
       req.method !== "GET" &&
       req.method !== "HEAD"
     ) {
-      const requestContentType =
+      const contentType =
         req.headers["content-type"] || "";
 
-      // -------------------------------------------------
-      // FORM DATA
-      // -------------------------------------------------
+      // -----------------------------------------------------
+      // application/x-www-form-urlencoded
+      // -----------------------------------------------------
 
       if (
-        requestContentType.includes(
+        contentType.includes(
           "application/x-www-form-urlencoded"
         )
       ) {
         if (
           typeof req.body === "string"
+        ) {
+          body = req.body;
+        } else if (
+          Buffer.isBuffer(req.body)
         ) {
           body = req.body;
         } else {
@@ -140,17 +150,13 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
               const [key, value]
               of Object.entries(req.body)
             ) {
-              if (
-                Array.isArray(value)
-              ) {
-                value.forEach(
-                  (item) => {
-                    params.append(
-                      key,
-                      String(item)
-                    );
-                  }
-                );
+              if (Array.isArray(value)) {
+                value.forEach((item) => {
+                  params.append(
+                    key,
+                    String(item)
+                  );
+                });
               } else if (
                 value !== undefined &&
                 value !== null
@@ -163,52 +169,80 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
             }
           }
 
-          body =
-            params.toString();
+          body = params.toString();
         }
       }
 
-      // -------------------------------------------------
-      // JSON
-      // -------------------------------------------------
+      // -----------------------------------------------------
+      // application/json
+      // -----------------------------------------------------
 
       else if (
-        requestContentType.includes(
+        contentType.includes(
           "application/json"
         )
       ) {
-        body =
+        if (
           typeof req.body === "string"
-            ? req.body
-            : JSON.stringify(
-                req.body || {}
-              );
+        ) {
+          body = req.body;
+        } else {
+          body = JSON.stringify(
+            req.body || {}
+          );
+        }
       }
 
-      // -------------------------------------------------
-      // OTHER REQUESTS
-      // -------------------------------------------------
+      // -----------------------------------------------------
+      // multipart/form-data
+      // -----------------------------------------------------
+
+      else if (
+        contentType.includes(
+          "multipart/form-data"
+        )
+      ) {
+        if (
+          typeof req.body === "string"
+        ) {
+          body = req.body;
+        } else if (
+          Buffer.isBuffer(req.body)
+        ) {
+          body = req.body;
+        } else {
+          body = undefined;
+        }
+      }
+
+      // -----------------------------------------------------
+      // Other POST requests
+      // -----------------------------------------------------
 
       else if (
         typeof req.body === "string"
       ) {
-        body =
-          req.body;
+        body = req.body;
+      }
+
+      else if (
+        Buffer.isBuffer(req.body)
+      ) {
+        body = req.body;
       }
 
       else if (
         req.body
       ) {
-        body =
-          JSON.stringify(
-            req.body
-          );
+        body = JSON.stringify(
+          req.body
+        );
       }
     }
 
-    // =================================================
-    // REQUEST WORDPRESS
-    // =================================================
+    // =====================================================
+    // SEND REQUEST TO WORDPRESS
+    // =====================================================
 
     const response =
       await fetch(
@@ -221,17 +255,15 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
         }
       );
 
-    // =================================================
+    // =====================================================
     // RESPONSE HEADERS
-    // =================================================
+    // =====================================================
 
     response.headers.forEach(
       (value, key) => {
         const lower =
           key.toLowerCase();
 
-        // These headers can cause problems because
-        // Vercel is generating the final response.
         if (
           ![
             "content-length",
@@ -248,9 +280,9 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
       }
     );
 
-    // =================================================
-    // HTTP REDIRECT
-    // =================================================
+    // =====================================================
+    // REDIRECT
+    // =====================================================
 
     if (
       response.status >= 300 &&
@@ -262,15 +294,11 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
         );
 
       if (location) {
-
-        // Convert WordPress redirects
-        // to the public Vercel domain.
         location =
           replaceAllWordPressUrls(
             location
           );
 
-        // Handle relative redirects.
         if (
           location.startsWith("/")
         ) {
@@ -292,18 +320,18 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
       }
     }
 
-    // =================================================
+    // =====================================================
     // RESPONSE CONTENT TYPE
-    // =================================================
+    // =====================================================
 
     const responseContentType =
       response.headers.get(
         "content-type"
       ) || "";
 
-    // =================================================
+    // =====================================================
     // HTML
-    // =================================================
+    // =====================================================
 
     if (
       responseContentType.includes(
@@ -335,32 +363,17 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
       );
     }
 
-    // =================================================
+    // =====================================================
     // XML / SITEMAP
-    // =================================================
+    // =====================================================
 
     if (
-      responseContentType.includes(
-        "xml"
-      ) ||
-      incoming.pathname.endsWith(
-        ".xml"
-      ) ||
-      incoming.pathname.endsWith(
-        ".xsl"
-      )
+      responseContentType.includes("xml") ||
+      incoming.pathname.endsWith(".xml") ||
+      incoming.pathname.endsWith(".xsl")
     ) {
       let xml =
         await response.text();
-
-      // IMPORTANT:
-      // This fixes Yoast sitemap URLs such as:
-      //
-      // magenta-caterpillar-505539.hostingersite.com
-      //
-      // and changes them to:
-      //
-      // www.mymaxclinic.sg
 
       xml =
         replaceAllWordPressUrls(
@@ -381,9 +394,9 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
       );
     }
 
-    // =================================================
-    // JSON
-    // =================================================
+    // =====================================================
+    // JSON / ELEMENTOR AJAX
+    // =====================================================
 
     if (
       responseContentType.includes(
@@ -415,9 +428,9 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
       );
     }
 
-    // =================================================
+    // =====================================================
     // EVERYTHING ELSE
-    // =================================================
+    // =====================================================
 
     const buffer =
       Buffer.from(
@@ -444,19 +457,16 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
     ).json({
       error:
         "WordPress proxy failed",
-
       message:
         error.message
     });
   }
 
-
-  // ===================================================
+  // =====================================================
   // REPLACE WORDPRESS URLS
-  // ===================================================
+  // =====================================================
 
   function replaceAllWordPressUrls(value) {
-
     if (!value) {
       return value;
     }
@@ -464,10 +474,7 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
     let result =
       String(value);
 
-    // =================================================
-    // NORMAL HTTPS URL
-    // =================================================
-
+    // Normal HTTPS
     result =
       result.replaceAll(
         `https://${WP_WWW_HOST}`,
@@ -480,10 +487,7 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
         PUBLIC_ORIGIN
       );
 
-    // =================================================
-    // NORMAL HTTP URL
-    // =================================================
-
+    // Normal HTTP
     result =
       result.replaceAll(
         `http://${WP_WWW_HOST}`,
@@ -496,10 +500,7 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
         PUBLIC_ORIGIN
       );
 
-    // =================================================
-    // PROTOCOL RELATIVE
-    // =================================================
-
+    // Protocol-relative
     result =
       result.replaceAll(
         `//${WP_WWW_HOST}`,
@@ -512,12 +513,7 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
         `//${PUBLIC_HOST}`
       );
 
-    // =================================================
-    // ESCAPED JSON URL
-    //
-    // https:\/\/magenta...
-    // =================================================
-
+    // Escaped JSON URLs
     result =
       result.replaceAll(
         `https:\\/\\/${WP_WWW_HOST}`,
@@ -542,12 +538,7 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
         `https:\\/\\/${PUBLIC_HOST}`
       );
 
-    // =================================================
-    // ESCAPED PROTOCOL RELATIVE
-    //
-    // \:\/\/magenta...
-    // =================================================
-
+    // Escaped protocol-relative
     result =
       result.replaceAll(
         `\\/\\/${WP_WWW_HOST}`,
@@ -560,13 +551,7 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
         `\\/\\/${PUBLIC_HOST}`
       );
 
-    // =================================================
-    // EXTRA SAFETY
-    //
-    // Handles the WordPress domain even when it appears
-    // in places we didn't specifically anticipate.
-    // =================================================
-
+    // Extra safety
     result =
       result.replaceAll(
         WP_WWW_HOST,
