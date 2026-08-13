@@ -14,13 +14,10 @@ export default async function handler(req, res) {
   const PUBLIC_HOST =
     "www.mymaxclinic.sg";
 
-  // Vercel preview deployments get random subdomains like
-  // singapore-vercel-project-h3ej6p9rh-max-clinic-projects.vercel.app.
-  // We allow those (and the production apex vercel.app URL, if any)
-  // for CORS *in addition to* PUBLIC_ORIGIN, so preview testing
-  // doesn't get blanket-blocked - without opening CORS to the
-  // entire internet. Adjust the "-max-clinic-projects" team slug
-  // below if your Vercel team/project slug ever changes.
+  // =========================================================
+  // ALLOWED CORS ORIGINS
+  // =========================================================
+
   const ALLOWED_ORIGIN_PATTERN =
     /^https:\/\/[a-z0-9-]+-max-clinic-projects\.vercel\.app$/i;
 
@@ -28,19 +25,168 @@ export default async function handler(req, res) {
     if (!requestOrigin) {
       return PUBLIC_ORIGIN;
     }
+
     if (requestOrigin === PUBLIC_ORIGIN) {
       return PUBLIC_ORIGIN;
     }
+
     if (ALLOWED_ORIGIN_PATTERN.test(requestOrigin)) {
       return requestOrigin;
     }
+
     return PUBLIC_ORIGIN;
   }
 
+  // =========================================================
+  // REPLACE WORDPRESS URLS
+  // =========================================================
+
+  function replaceAllWordPressUrls(value) {
+    if (value === undefined || value === null) {
+      return value;
+    }
+
+    let result = String(value);
+
+    // -------------------------------------------------------
+    // HTTPS
+    // -------------------------------------------------------
+
+    result = result.replaceAll(
+      `https://${WP_WWW_HOST}`,
+      PUBLIC_ORIGIN
+    );
+
+    result = result.replaceAll(
+      `https://${WP_HOST}`,
+      PUBLIC_ORIGIN
+    );
+
+    // -------------------------------------------------------
+    // HTTP
+    // -------------------------------------------------------
+
+    result = result.replaceAll(
+      `http://${WP_WWW_HOST}`,
+      PUBLIC_ORIGIN
+    );
+
+    result = result.replaceAll(
+      `http://${WP_HOST}`,
+      PUBLIC_ORIGIN
+    );
+
+    // -------------------------------------------------------
+    // PROTOCOL RELATIVE
+    // -------------------------------------------------------
+
+    result = result.replaceAll(
+      `//${WP_WWW_HOST}`,
+      `//${PUBLIC_HOST}`
+    );
+
+    result = result.replaceAll(
+      `//${WP_HOST}`,
+      `//${PUBLIC_HOST}`
+    );
+
+    // -------------------------------------------------------
+    // ESCAPED JSON HTTPS
+    //
+    // Example:
+    // https:\/\/magenta-caterpillar-505539.hostingersite.com
+    // -------------------------------------------------------
+
+    result = result.replaceAll(
+      `https:\\/\\/${WP_WWW_HOST}`,
+      `https:\\/\\/${PUBLIC_HOST}`
+    );
+
+    result = result.replaceAll(
+      `https:\\/\\/${WP_HOST}`,
+      `https:\\/\\/${PUBLIC_HOST}`
+    );
+
+    // -------------------------------------------------------
+    // ESCAPED JSON HTTP
+    // -------------------------------------------------------
+
+    result = result.replaceAll(
+      `http:\\/\\/${WP_WWW_HOST}`,
+      `https:\\/\\/${PUBLIC_HOST}`
+    );
+
+    result = result.replaceAll(
+      `http:\\/\\/${WP_HOST}`,
+      `https:\\/\\/${PUBLIC_HOST}`
+    );
+
+    // -------------------------------------------------------
+    // ESCAPED PROTOCOL RELATIVE
+    // -------------------------------------------------------
+
+    result = result.replaceAll(
+      `\\/\\/${WP_WWW_HOST}`,
+      `\\/\\/${PUBLIC_HOST}`
+    );
+
+    result = result.replaceAll(
+      `\\/\\/${WP_HOST}`,
+      `\\/\\/${PUBLIC_HOST}`
+    );
+
+    // -------------------------------------------------------
+    // HOSTNAME ONLY
+    // -------------------------------------------------------
+
+    result = result.replaceAll(
+      WP_WWW_HOST,
+      PUBLIC_HOST
+    );
+
+    result = result.replaceAll(
+      WP_HOST,
+      PUBLIC_HOST
+    );
+
+    return result;
+  }
+
+  // =========================================================
+  // NORMALIZE REDIRECT URL
+  // =========================================================
+
+  function normalizeRedirectUrl(location) {
+    if (!location) {
+      return location;
+    }
+
+    let result = replaceAllWordPressUrls(location);
+
+    // Relative redirect
+    if (
+      result.startsWith("/") &&
+      !result.startsWith("//")
+    ) {
+      result =
+        PUBLIC_ORIGIN +
+        result;
+    }
+
+    // Protocol-relative redirect
+    if (result.startsWith("//")) {
+      result =
+        "https:" +
+        result;
+    }
+
+    return result;
+  }
+
   try {
-    // =====================================================
+    // =======================================================
     // INCOMING URL
-    // =====================================================
+    // =======================================================
 
     const incoming = new URL(
       req.url,
@@ -49,9 +195,9 @@ export default async function handler(req, res) {
 
     const pathname = incoming.pathname;
 
-    // =====================================================
+    // =======================================================
     // ROBOTS.TXT
-    // =====================================================
+    // =======================================================
 
     if (pathname === "/robots.txt") {
       res.status(200);
@@ -81,22 +227,25 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       );
     }
 
-    // =====================================================
-    // TARGET WORDPRESS URL
-    // =====================================================
+    // =======================================================
+    // WORDPRESS TARGET
+    // =======================================================
 
     const target =
       WP_ORIGIN +
       pathname +
       incoming.search;
 
-    // =====================================================
+    // =======================================================
     // REQUEST HEADERS
-    // =====================================================
+    // =======================================================
 
     const headers = new Headers();
 
-    for (const [key, value] of Object.entries(req.headers)) {
+    for (
+      const [key, value]
+      of Object.entries(req.headers)
+    ) {
       const lower = key.toLowerCase();
 
       if (
@@ -112,26 +261,23 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
           key,
           Array.isArray(value)
             ? value.join(",")
-            : value
+            : String(value)
         );
       }
     }
 
-    // -----------------------------------------------------
+    // =======================================================
     // WORDPRESS HOST
-    // -----------------------------------------------------
-    // We MUST send the WordPress host on the Host header so
-    // Hostinger's server routes to the right site, but the
-    // browser only ever talks to PUBLIC_HOST. WordPress itself
-    // learns the "real" public host via X-Forwarded-Host below,
-    // which is what plugins like Fluent Forms / Elementor should
-    // use (via is_ssl()/home_url() filters) when generating URLs.
+    // =======================================================
 
-    headers.set("Host", WP_HOST);
+    headers.set(
+      "Host",
+      WP_HOST
+    );
 
-    // -----------------------------------------------------
-    // PUBLIC DOMAIN
-    // -----------------------------------------------------
+    // =======================================================
+    // PUBLIC DOMAIN INFORMATION
+    // =======================================================
 
     headers.set(
       "X-Forwarded-Host",
@@ -143,24 +289,46 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       "https"
     );
 
-    // =====================================================
-    // AJAX / CORS
-    // =====================================================
+    headers.set(
+      "X-Forwarded-Port",
+      "443"
+    );
+
+    // =======================================================
+    // AJAX
+    // =======================================================
 
     const isAjax =
       pathname === "/wp-admin/admin-ajax.php";
 
     if (isAjax) {
-      // WordPress receives its own origin, so plugins that
-      // validate Origin/Referer against home_url() don't choke.
-      headers.set(
-        "Origin",
-        WP_ORIGIN
-      );
+      /*
+       * Keep the browser's original Origin when possible.
+       * This is safer for CORS/security validation.
+       */
+
+      const browserOrigin =
+        req.headers.origin;
+
+      if (browserOrigin) {
+        headers.set(
+          "Origin",
+          browserOrigin
+        );
+      } else {
+        headers.set(
+          "Origin",
+          PUBLIC_ORIGIN
+        );
+      }
+
+      /*
+       * Referer should represent the public site.
+       */
 
       headers.set(
         "Referer",
-        WP_ORIGIN + "/"
+        PUBLIC_ORIGIN + "/"
       );
 
       headers.set(
@@ -169,31 +337,32 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       );
     }
 
-    // =====================================================
+    // =======================================================
     // DO NOT REQUEST COMPRESSED RESPONSE
-    // =====================================================
-    // We need to rewrite text responses, so we ask WordPress
-    // for uncompressed content instead of trying to gunzip it
-    // ourselves.
+    // =======================================================
 
-    headers.delete("accept-encoding");
+    headers.delete(
+      "accept-encoding"
+    );
 
-    // =====================================================
+    // =======================================================
     // REQUEST BODY
-    // =====================================================
+    // =======================================================
 
-    let body = undefined;
+    let body;
 
     if (
       req.method !== "GET" &&
       req.method !== "HEAD"
     ) {
       const contentType =
-        req.headers["content-type"] || "";
+        String(
+          req.headers["content-type"] || ""
+        ).toLowerCase();
 
-      // ---------------------------------------------------
+      // -----------------------------------------------------
       // FORM URL ENCODED
-      // ---------------------------------------------------
+      // -----------------------------------------------------
 
       if (
         contentType.includes(
@@ -224,12 +393,14 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
               if (
                 Array.isArray(value)
               ) {
-                value.forEach((item) => {
+                for (
+                  const item of value
+                ) {
                   params.append(
                     key,
                     String(item)
                   );
-                });
+                }
               }
 
               else if (
@@ -249,9 +420,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         }
       }
 
-      // ---------------------------------------------------
+      // -----------------------------------------------------
       // JSON
-      // ---------------------------------------------------
+      // -----------------------------------------------------
 
       else if (
         contentType.includes(
@@ -266,9 +437,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
               );
       }
 
-      // ---------------------------------------------------
+      // -----------------------------------------------------
       // MULTIPART
-      // ---------------------------------------------------
+      // -----------------------------------------------------
 
       else if (
         contentType.includes(
@@ -283,9 +454,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         }
       }
 
-      // ---------------------------------------------------
+      // -----------------------------------------------------
       // OTHER
-      // ---------------------------------------------------
+      // -----------------------------------------------------
 
       else if (
         typeof req.body === "string"
@@ -307,9 +478,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       }
     }
 
-    // =====================================================
+    // =======================================================
     // REQUEST WORDPRESS
-    // =====================================================
+    // =======================================================
 
     const response =
       await fetch(
@@ -322,9 +493,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         }
       );
 
-    // =====================================================
+    // =======================================================
     // RESPONSE HEADERS
-    // =====================================================
+    // =======================================================
 
     response.headers.forEach(
       (value, key) => {
@@ -338,9 +509,10 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
             "transfer-encoding",
             "connection",
             "location",
+            "refresh",
             "access-control-allow-origin",
             "access-control-allow-credentials",
-            "set-cookie" // handled below individually to preserve multiple cookies
+            "set-cookie"
           ].includes(lower)
         ) {
           res.setHeader(
@@ -351,42 +523,57 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       }
     );
 
-    // Preserve WordPress auth/session cookies (raw.headers keeps
-    // multiple Set-Cookie lines separate, response.headers.forEach
-    // would collapse them into one comma-joined string).
-    if (typeof response.headers.getSetCookie === "function") {
-      const setCookies = response.headers.getSetCookie();
-      if (setCookies && setCookies.length > 0) {
-        res.setHeader("Set-Cookie", setCookies);
-      }
-    } else {
-      const singleSetCookie = response.headers.get("set-cookie");
-      if (singleSetCookie) {
-        res.setHeader("Set-Cookie", singleSetCookie);
+    // =======================================================
+    // PRESERVE SET-COOKIE
+    // =======================================================
+
+    if (
+      typeof response.headers.getSetCookie ===
+      "function"
+    ) {
+      const setCookies =
+        response.headers.getSetCookie();
+
+      if (
+        setCookies &&
+        setCookies.length
+      ) {
+        res.setHeader(
+          "Set-Cookie",
+          setCookies
+        );
       }
     }
 
-    // =====================================================
+    else {
+      const cookie =
+        response.headers.get(
+          "set-cookie"
+        );
+
+      if (cookie) {
+        res.setHeader(
+          "Set-Cookie",
+          cookie
+        );
+      }
+    }
+
+    // =======================================================
     // CORS
-    // =====================================================
+    // =======================================================
 
     const requestOrigin =
       req.headers.origin || "";
 
     const allowedOrigin =
-      resolveAllowedOrigin(requestOrigin);
+      resolveAllowedOrigin(
+        requestOrigin
+      );
 
     res.setHeader(
       "Access-Control-Allow-Origin",
       allowedOrigin
-    );
-
-    // Required whenever Access-Control-Allow-Origin varies
-    // based on the incoming request, so shared CDN/browser
-    // caches don't serve one origin's CORS headers to another.
-    res.setHeader(
-      "Vary",
-      "Origin"
     );
 
     res.setHeader(
@@ -404,13 +591,14 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       "Content-Type, X-Requested-With, X-WP-Nonce, Authorization"
     );
 
-    // =====================================================
-    // NEVER CACHE AJAX / DYNAMIC ENDPOINTS
-    // =====================================================
-    // admin-ajax.php (Fluent Forms, Elementor) and the REST API
-    // must never be served stale, regardless of what caching
-    // headers WordPress itself returns or what an edge/CDN layer
-    // might otherwise decide to do with them.
+    res.setHeader(
+      "Vary",
+      "Origin"
+    );
+
+    // =======================================================
+    // NEVER CACHE DYNAMIC REQUESTS
+    // =======================================================
 
     if (
       isAjax ||
@@ -423,17 +611,21 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       );
     }
 
-    // =====================================================
+    // =======================================================
     // OPTIONS / PREFLIGHT
-    // =====================================================
+    // =======================================================
 
-    if (req.method === "OPTIONS") {
-      return res.status(204).end();
+    if (
+      req.method === "OPTIONS"
+    ) {
+      return res
+        .status(204)
+        .end();
     }
 
-    // =====================================================
-    // REDIRECT
-    // =====================================================
+    // =======================================================
+    // HTTP REDIRECT
+    // =======================================================
 
     if (
       response.status >= 300 &&
@@ -446,18 +638,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
 
       if (location) {
         location =
-          replaceAllWordPressUrls(
+          normalizeRedirectUrl(
             location
           );
-
-        // Relative URL
-        if (
-          location.startsWith("/")
-        ) {
-          location =
-            PUBLIC_ORIGIN +
-            location;
-        }
 
         res.status(
           response.status
@@ -472,9 +655,30 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       }
     }
 
-    // =====================================================
+    // =======================================================
+    // REFRESH HEADER REDIRECT
+    // =======================================================
+
+    const refreshHeader =
+      response.headers.get(
+        "refresh"
+      );
+
+    if (refreshHeader) {
+      const rewrittenRefresh =
+        replaceAllWordPressUrls(
+          refreshHeader
+        );
+
+      res.setHeader(
+        "Refresh",
+        rewrittenRefresh
+      );
+    }
+
+    // =======================================================
     // RESPONSE CONTENT TYPE
-    // =====================================================
+    // =======================================================
 
     const responseContentType =
       (
@@ -483,9 +687,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         ) || ""
       ).toLowerCase();
 
-    // =====================================================
-    // HTML
-    // =====================================================
+    // =======================================================
+    // TEXT / HTML
+    // =======================================================
 
     if (
       responseContentType.includes(
@@ -493,14 +697,17 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       ) ||
       responseContentType.includes(
         "application/xhtml+xml"
+      ) ||
+      responseContentType.includes(
+        "text/plain"
       )
     ) {
-      let html =
+      let text =
         await response.text();
 
-      html =
+      text =
         replaceAllWordPressUrls(
-          html
+          text
         );
 
       res.status(
@@ -509,28 +716,25 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
 
       res.setHeader(
         "Content-Type",
-        responseContentType
+        response.headers.get(
+          "content-type"
+        ) ||
+        "text/plain; charset=utf-8"
       );
 
       return res.send(
-        html
+        text
       );
     }
 
-    // =====================================================
+    // =======================================================
     // CSS
-    // =====================================================
-    // Elementor writes Google Fonts / uploads URLs as absolute
-    // WordPress-hostname URLs inside generated CSS files
-    // (e.g. elementor/css/post-*.css). These must be rewritten
-    // exactly like HTML, or fonts/images referenced via
-    // url(...) will fail cross-origin.
+    // =======================================================
 
     if (
       responseContentType.includes(
         "text/css"
-      ) ||
-      pathname.endsWith(".css")
+      )
     ) {
       let css =
         await response.text();
@@ -546,9 +750,10 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
 
       res.setHeader(
         "Content-Type",
-        responseContentType.includes("css")
-          ? responseContentType
-          : "text/css; charset=UTF-8"
+        response.headers.get(
+          "content-type"
+        ) ||
+        "text/css; charset=utf-8"
       );
 
       return res.send(
@@ -556,16 +761,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       );
     }
 
-    // =====================================================
+    // =======================================================
     // JAVASCRIPT
-    // =====================================================
-    // Enqueued/localized JS (Fluent Forms ajax URL config,
-    // Elementor frontend config, etc.) can ship as separate
-    // .js files rather than inline <script> blocks, especially
-    // with asset-optimization/minification plugins. These were
-    // previously falling through untouched to the raw pass-through
-    // branch below, which is why the browser could end up POSTing
-    // straight to the WordPress hostname.
+    // =======================================================
 
     if (
       responseContentType.includes(
@@ -574,7 +772,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       responseContentType.includes(
         "ecmascript"
       ) ||
-      pathname.endsWith(".js")
+      pathname.endsWith(
+        ".js"
+      )
     ) {
       let js =
         await response.text();
@@ -590,8 +790,10 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
 
       res.setHeader(
         "Content-Type",
-        responseContentType ||
-          "application/javascript; charset=UTF-8"
+        response.headers.get(
+          "content-type"
+        ) ||
+        "application/javascript; charset=utf-8"
       );
 
       return res.send(
@@ -599,16 +801,20 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       );
     }
 
-    // =====================================================
+    // =======================================================
     // XML / SITEMAP
-    // =====================================================
+    // =======================================================
 
     if (
       responseContentType.includes(
         "xml"
       ) ||
-      pathname.endsWith(".xml") ||
-      pathname.endsWith(".xsl")
+      pathname.endsWith(
+        ".xml"
+      ) ||
+      pathname.endsWith(
+        ".xsl"
+      )
     ) {
       let xml =
         await response.text();
@@ -624,7 +830,10 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
 
       res.setHeader(
         "Content-Type",
-        "text/xml; charset=UTF-8"
+        response.headers.get(
+          "content-type"
+        ) ||
+        "application/xml; charset=utf-8"
       );
 
       return res.send(
@@ -632,9 +841,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       );
     }
 
-    // =====================================================
+    // =======================================================
     // JSON / AJAX
-    // =====================================================
+    // =======================================================
 
     if (
       responseContentType.includes(
@@ -647,9 +856,44 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       let json =
         await response.text();
 
+      /*
+       * IMPORTANT:
+       *
+       * Fluent Forms can return the Thank You
+       * redirect URL inside JSON.
+       *
+       * Example:
+       *
+       * {
+       *   "success": true,
+       *   "redirectUrl":
+       *   "https://magenta-caterpillar-505539.hostingersite.com/thank-you/"
+       * }
+       *
+       * We rewrite that URL before sending
+       * the response back to the browser.
+       */
+
       json =
         replaceAllWordPressUrls(
           json
+        );
+
+      /*
+       * Also handle escaped URLs that may contain
+       * Unicode slash escaping or other encoding.
+       */
+
+      json =
+        json.replaceAll(
+          `https%3A%2F%2F${WP_HOST}`,
+          `https%3A%2F%2F${PUBLIC_HOST}`
+        );
+
+      json =
+        json.replaceAll(
+          `https%3A%2F%2F${WP_WWW_HOST}`,
+          `https%3A%2F%2F${PUBLIC_HOST}`
         );
 
       res.status(
@@ -658,6 +902,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
 
       res.setHeader(
         "Content-Type",
+        response.headers.get(
+          "content-type"
+        ) ||
         "application/json; charset=utf-8"
       );
 
@@ -666,11 +913,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       );
     }
 
-    // =====================================================
-    // EVERYTHING ELSE (binary: images, fonts, PDFs, etc.)
-    // =====================================================
-    // Passed through untouched on purpose - text-rewriting a
-    // binary file would corrupt it.
+    // =======================================================
+    // BINARY
+    // =======================================================
 
     const buffer =
       Buffer.from(
@@ -692,136 +937,13 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       error
     );
 
-    return res.status(
-      502
-    ).json({
-      error:
-        "WordPress proxy failed",
-      message:
-        error.message
-    });
-  }
-
-  // =====================================================
-  // REPLACE ALL WORDPRESS URLs
-  // =====================================================
-
-  function replaceAllWordPressUrls(value) {
-    if (!value) {
-      return value;
-    }
-
-    let result =
-      String(value);
-
-    // -----------------------------------------------------
-    // HTTPS
-    // -----------------------------------------------------
-
-    result =
-      result.replaceAll(
-        `https://${WP_WWW_HOST}`,
-        PUBLIC_ORIGIN
-      );
-
-    result =
-      result.replaceAll(
-        `https://${WP_HOST}`,
-        PUBLIC_ORIGIN
-      );
-
-    // -----------------------------------------------------
-    // HTTP
-    // -----------------------------------------------------
-
-    result =
-      result.replaceAll(
-        `http://${WP_WWW_HOST}`,
-        PUBLIC_ORIGIN
-      );
-
-    result =
-      result.replaceAll(
-        `http://${WP_HOST}`,
-        PUBLIC_ORIGIN
-      );
-
-    // -----------------------------------------------------
-    // PROTOCOL RELATIVE
-    // -----------------------------------------------------
-
-    result =
-      result.replaceAll(
-        `//${WP_WWW_HOST}`,
-        `//${PUBLIC_HOST}`
-      );
-
-    result =
-      result.replaceAll(
-        `//${WP_HOST}`,
-        `//${PUBLIC_HOST}`
-      );
-
-    // -----------------------------------------------------
-    // ESCAPED JSON URLS
-    // -----------------------------------------------------
-
-    result =
-      result.replaceAll(
-        `https:\\/\\/${WP_WWW_HOST}`,
-        `https:\\/\\/${PUBLIC_HOST}`
-      );
-
-    result =
-      result.replaceAll(
-        `https:\\/\\/${WP_HOST}`,
-        `https:\\/\\/${PUBLIC_HOST}`
-      );
-
-    result =
-      result.replaceAll(
-        `http:\\/\\/${WP_WWW_HOST}`,
-        `https:\\/\\/${PUBLIC_HOST}`
-      );
-
-    result =
-      result.replaceAll(
-        `http:\\/\\/${WP_HOST}`,
-        `https:\\/\\/${PUBLIC_HOST}`
-      );
-
-    // -----------------------------------------------------
-    // ESCAPED PROTOCOL RELATIVE
-    // -----------------------------------------------------
-
-    result =
-      result.replaceAll(
-        `\\/\\/${WP_WWW_HOST}`,
-        `\\/\\/${PUBLIC_HOST}`
-      );
-
-    result =
-      result.replaceAll(
-        `\\/\\/${WP_HOST}`,
-        `\\/\\/${PUBLIC_HOST}`
-      );
-
-    // -----------------------------------------------------
-    // HOSTNAME ONLY
-    // -----------------------------------------------------
-
-    result =
-      result.replaceAll(
-        WP_WWW_HOST,
-        PUBLIC_HOST
-      );
-
-    result =
-      result.replaceAll(
-        WP_HOST,
-        PUBLIC_HOST
-      );
-
-    return result;
+    return res
+      .status(502)
+      .json({
+        error:
+          "WordPress proxy failed",
+        message:
+          error.message
+      });
   }
 }
