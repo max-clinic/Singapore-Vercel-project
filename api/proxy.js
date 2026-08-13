@@ -14,6 +14,29 @@ export default async function handler(req, res) {
   const PUBLIC_HOST =
     "www.mymaxclinic.sg";
 
+  // Vercel preview deployments get random subdomains like
+  // singapore-vercel-project-h3ej6p9rh-max-clinic-projects.vercel.app.
+  // We allow those (and the production apex vercel.app URL, if any)
+  // for CORS *in addition to* PUBLIC_ORIGIN, so preview testing
+  // doesn't get blanket-blocked - without opening CORS to the
+  // entire internet. Adjust the "-max-clinic-projects" team slug
+  // below if your Vercel team/project slug ever changes.
+  const ALLOWED_ORIGIN_PATTERN =
+    /^https:\/\/[a-z0-9-]+-max-clinic-projects\.vercel\.app$/i;
+
+  function resolveAllowedOrigin(requestOrigin) {
+    if (!requestOrigin) {
+      return PUBLIC_ORIGIN;
+    }
+    if (requestOrigin === PUBLIC_ORIGIN) {
+      return PUBLIC_ORIGIN;
+    }
+    if (ALLOWED_ORIGIN_PATTERN.test(requestOrigin)) {
+      return requestOrigin;
+    }
+    return PUBLIC_ORIGIN;
+  }
+
   try {
     // =====================================================
     // INCOMING URL
@@ -347,9 +370,23 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     // CORS
     // =====================================================
 
+    const requestOrigin =
+      req.headers.origin || "";
+
+    const allowedOrigin =
+      resolveAllowedOrigin(requestOrigin);
+
     res.setHeader(
       "Access-Control-Allow-Origin",
-      PUBLIC_ORIGIN
+      allowedOrigin
+    );
+
+    // Required whenever Access-Control-Allow-Origin varies
+    // based on the incoming request, so shared CDN/browser
+    // caches don't serve one origin's CORS headers to another.
+    res.setHeader(
+      "Vary",
+      "Origin"
     );
 
     res.setHeader(
