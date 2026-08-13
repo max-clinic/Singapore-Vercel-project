@@ -15,6 +15,10 @@ export default async function handler(req, res) {
     "www.mymaxclinic.sg";
 
   try {
+    // =================================================
+    // INCOMING REQUEST
+    // =================================================
+
     const incoming = new URL(
       req.url,
       `https://${req.headers.host}`
@@ -52,11 +56,14 @@ export default async function handler(req, res) {
       }
     }
 
+    // Tell Hostinger that the request is going
+    // to the WordPress server.
     headers.set(
       "Host",
       WP_HOST
     );
 
+    // Tell WordPress the public domain.
     headers.set(
       "X-Forwarded-Host",
       PUBLIC_HOST
@@ -67,8 +74,8 @@ export default async function handler(req, res) {
       "https"
     );
 
-    // Do not request gzip/br from WordPress.
-    // This allows us to safely modify HTML/JSON.
+    // Prevent gzip/br because we need to modify
+    // HTML, XML and JSON responses.
     headers.delete(
       "accept-encoding"
     );
@@ -83,11 +90,15 @@ export default async function handler(req, res) {
       req.method !== "GET" &&
       req.method !== "HEAD"
     ) {
-      const contentType =
+      const requestContentType =
         req.headers["content-type"] || "";
 
+      // -------------------------------------------------
+      // FORM DATA
+      // -------------------------------------------------
+
       if (
-        contentType.includes(
+        requestContentType.includes(
           "application/x-www-form-urlencoded"
         )
       ) {
@@ -132,8 +143,12 @@ export default async function handler(req, res) {
         }
       }
 
+      // -------------------------------------------------
+      // JSON
+      // -------------------------------------------------
+
       else if (
-        contentType.includes(
+        requestContentType.includes(
           "application/json"
         )
       ) {
@@ -144,6 +159,10 @@ export default async function handler(req, res) {
                 req.body || {}
               );
       }
+
+      // -------------------------------------------------
+      // OTHER REQUESTS
+      // -------------------------------------------------
 
       else if (
         typeof req.body === "string"
@@ -186,6 +205,8 @@ export default async function handler(req, res) {
         const lower =
           key.toLowerCase();
 
+        // These headers can cause problems because
+        // Vercel is generating the final response.
         if (
           ![
             "content-length",
@@ -216,12 +237,15 @@ export default async function handler(req, res) {
         );
 
       if (location) {
+
+        // Convert WordPress redirects
+        // to the public Vercel domain.
         location =
           replaceAllWordPressUrls(
             location
           );
 
-        // Relative redirect
+        // Handle relative redirects.
         if (
           location.startsWith("/")
         ) {
@@ -244,10 +268,10 @@ export default async function handler(req, res) {
     }
 
     // =================================================
-    // CONTENT TYPE
+    // RESPONSE CONTENT TYPE
     // =================================================
 
-    const contentType =
+    const responseContentType =
       response.headers.get(
         "content-type"
       ) || "";
@@ -257,23 +281,15 @@ export default async function handler(req, res) {
     // =================================================
 
     if (
-      contentType.includes(
+      responseContentType.includes(
         "text/html"
       ) ||
-      contentType.includes(
+      responseContentType.includes(
         "application/xhtml+xml"
       )
     ) {
       let html =
         await response.text();
-
-      /*
-       * IMPORTANT
-       *
-       * Replace normal URLs
-       * AND URLs escaped inside
-       * JavaScript/JSON.
-       */
 
       html =
         replaceAllWordPressUrls(
@@ -284,8 +300,59 @@ export default async function handler(req, res) {
         response.status
       );
 
+      res.setHeader(
+        "Content-Type",
+        responseContentType
+      );
+
       return res.send(
         html
+      );
+    }
+
+    // =================================================
+    // XML / SITEMAP
+    // =================================================
+
+    if (
+      responseContentType.includes(
+        "xml"
+      ) ||
+      incoming.pathname.endsWith(
+        ".xml"
+      ) ||
+      incoming.pathname.endsWith(
+        ".xsl"
+      )
+    ) {
+      let xml =
+        await response.text();
+
+      // IMPORTANT:
+      // This fixes Yoast sitemap URLs such as:
+      //
+      // magenta-caterpillar-505539.hostingersite.com
+      //
+      // and changes them to:
+      //
+      // www.mymaxclinic.sg
+
+      xml =
+        replaceAllWordPressUrls(
+          xml
+        );
+
+      res.status(
+        response.status
+      );
+
+      res.setHeader(
+        "Content-Type",
+        "text/xml; charset=UTF-8"
+      );
+
+      return res.send(
+        xml
       );
     }
 
@@ -294,8 +361,11 @@ export default async function handler(req, res) {
     // =================================================
 
     if (
-      contentType.includes(
+      responseContentType.includes(
         "application/json"
+      ) ||
+      responseContentType.includes(
+        "+json"
       )
     ) {
       let json =
@@ -349,6 +419,7 @@ export default async function handler(req, res) {
     ).json({
       error:
         "WordPress proxy failed",
+
       message:
         error.message
     });
@@ -360,6 +431,7 @@ export default async function handler(req, res) {
   // ===================================================
 
   function replaceAllWordPressUrls(value) {
+
     if (!value) {
       return value;
     }
@@ -367,9 +439,9 @@ export default async function handler(req, res) {
     let result =
       String(value);
 
-    // -------------------------------------------------
-    // Normal URLs
-    // -------------------------------------------------
+    // =================================================
+    // NORMAL HTTPS URL
+    // =================================================
 
     result =
       result.replaceAll(
@@ -379,13 +451,17 @@ export default async function handler(req, res) {
 
     result =
       result.replaceAll(
-        `http://${WP_WWW_HOST}`,
+        `https://${WP_HOST}`,
         PUBLIC_ORIGIN
       );
 
+    // =================================================
+    // NORMAL HTTP URL
+    // =================================================
+
     result =
       result.replaceAll(
-        `https://${WP_HOST}`,
+        `http://${WP_WWW_HOST}`,
         PUBLIC_ORIGIN
       );
 
@@ -395,9 +471,9 @@ export default async function handler(req, res) {
         PUBLIC_ORIGIN
       );
 
-    // -------------------------------------------------
-    // Protocol-relative URLs
-    // -------------------------------------------------
+    // =================================================
+    // PROTOCOL RELATIVE
+    // =================================================
 
     result =
       result.replaceAll(
@@ -411,22 +487,15 @@ export default async function handler(req, res) {
         `//${PUBLIC_HOST}`
       );
 
-    // -------------------------------------------------
-    // Escaped JSON URLs
+    // =================================================
+    // ESCAPED JSON URL
     //
-    // Example:
     // https:\/\/magenta...
-    // -------------------------------------------------
+    // =================================================
 
     result =
       result.replaceAll(
         `https:\\/\\/${WP_WWW_HOST}`,
-        `https:\\/\\/${PUBLIC_HOST}`
-      );
-
-    result =
-      result.replaceAll(
-        `http:\\/\\/${WP_WWW_HOST}`,
         `https:\\/\\/${PUBLIC_HOST}`
       );
 
@@ -438,13 +507,21 @@ export default async function handler(req, res) {
 
     result =
       result.replaceAll(
+        `http:\\/\\/${WP_WWW_HOST}`,
+        `https:\\/\\/${PUBLIC_HOST}`
+      );
+
+    result =
+      result.replaceAll(
         `http:\\/\\/${WP_HOST}`,
         `https:\\/\\/${PUBLIC_HOST}`
       );
 
-    // -------------------------------------------------
-    // Escaped protocol-relative URLs
-    // -------------------------------------------------
+    // =================================================
+    // ESCAPED PROTOCOL RELATIVE
+    //
+    // \:\/\/magenta...
+    // =================================================
 
     result =
       result.replaceAll(
@@ -456,6 +533,25 @@ export default async function handler(req, res) {
       result.replaceAll(
         `\\/\\/${WP_HOST}`,
         `\\/\\/${PUBLIC_HOST}`
+      );
+
+    // =================================================
+    // EXTRA SAFETY
+    //
+    // Handles the WordPress domain even when it appears
+    // in places we didn't specifically anticipate.
+    // =================================================
+
+    result =
+      result.replaceAll(
+        WP_WWW_HOST,
+        PUBLIC_HOST
+      );
+
+    result =
+      result.replaceAll(
+        WP_HOST,
+        PUBLIC_HOST
       );
 
     return result;
