@@ -97,6 +97,12 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     // -----------------------------------------------------
     // WORDPRESS HOST
     // -----------------------------------------------------
+    // We MUST send the WordPress host on the Host header so
+    // Hostinger's server routes to the right site, but the
+    // browser only ever talks to PUBLIC_HOST. WordPress itself
+    // learns the "real" public host via X-Forwarded-Host below,
+    // which is what plugins like Fluent Forms / Elementor should
+    // use (via is_ssl()/home_url() filters) when generating URLs.
 
     headers.set("Host", WP_HOST);
 
@@ -122,7 +128,8 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       pathname === "/wp-admin/admin-ajax.php";
 
     if (isAjax) {
-      // WordPress receives its own origin.
+      // WordPress receives its own origin, so plugins that
+      // validate Origin/Referer against home_url() don't choke.
       headers.set(
         "Origin",
         WP_ORIGIN
@@ -142,6 +149,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     // =====================================================
     // DO NOT REQUEST COMPRESSED RESPONSE
     // =====================================================
+    // We need to rewrite text responses, so we ask WordPress
+    // for uncompressed content instead of trying to gunzip it
+    // ourselves.
 
     headers.delete("accept-encoding");
 
@@ -306,7 +316,8 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
             "connection",
             "location",
             "access-control-allow-origin",
-            "access-control-allow-credentials"
+            "access-control-allow-credentials",
+            "set-cookie" // handled below individually to preserve multiple cookies
           ].includes(lower)
         ) {
           res.setHeader(
@@ -316,6 +327,21 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         }
       }
     );
+
+    // Preserve WordPress auth/session cookies (raw.headers keeps
+    // multiple Set-Cookie lines separate, response.headers.forEach
+    // would collapse them into one comma-joined string).
+    if (typeof response.headers.getSetCookie === "function") {
+      const setCookies = response.headers.getSetCookie();
+      if (setCookies && setCookies.length > 0) {
+        res.setHeader("Set-Cookie", setCookies);
+      }
+    } else {
+      const singleSetCookie = response.headers.get("set-cookie");
+      if (singleSetCookie) {
+        res.setHeader("Set-Cookie", singleSetCookie);
+      }
+    }
 
     // =====================================================
     // CORS
@@ -340,6 +366,25 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       "Access-Control-Allow-Headers",
       "Content-Type, X-Requested-With, X-WP-Nonce, Authorization"
     );
+
+    // =====================================================
+    // NEVER CACHE AJAX / DYNAMIC ENDPOINTS
+    // =====================================================
+    // admin-ajax.php (Fluent Forms, Elementor) and the REST API
+    // must never be served stale, regardless of what caching
+    // headers WordPress itself returns or what an edge/CDN layer
+    // might otherwise decide to do with them.
+
+    if (
+      isAjax ||
+      pathname.startsWith("/wp-json/") ||
+      pathname === "/wp-login.php"
+    ) {
+      res.setHeader(
+        "Cache-Control",
+        "no-store, no-cache, must-revalidate, max-age=0"
+      );
+    }
 
     // =====================================================
     // OPTIONS / PREFLIGHT
@@ -395,9 +440,11 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     // =====================================================
 
     const responseContentType =
-      response.headers.get(
-        "content-type"
-      ) || "";
+      (
+        response.headers.get(
+          "content-type"
+        ) || ""
+      ).toLowerCase();
 
     // =====================================================
     // HTML
@@ -430,6 +477,85 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
 
       return res.send(
         html
+      );
+    }
+
+    // =====================================================
+    // CSS
+    // =====================================================
+    // Elementor writes Google Fonts / uploads URLs as absolute
+    // WordPress-hostname URLs inside generated CSS files
+    // (e.g. elementor/css/post-*.css). These must be rewritten
+    // exactly like HTML, or fonts/images referenced via
+    // url(...) will fail cross-origin.
+
+    if (
+      responseContentType.includes(
+        "text/css"
+      )
+    ) {
+      let css =
+        await response.text();
+
+      css =
+        replaceAllWordPressUrls(
+          css
+        );
+
+      res.status(
+        response.status
+      );
+
+      res.setHeader(
+        "Content-Type",
+        responseContentType
+      );
+
+      return res.send(
+        css
+      );
+    }
+
+    // =====================================================
+    // JAVASCRIPT
+    // =====================================================
+    // Enqueued/localized JS (Fluent Forms ajax URL config,
+    // Elementor frontend config, etc.) can ship as separate
+    // .js files rather than inline <script> blocks, especially
+    // with asset-optimization/minification plugins. These were
+    // previously falling through untouched to the raw pass-through
+    // branch below, which is why the browser could end up POSTing
+    // straight to the WordPress hostname.
+
+    if (
+      responseContentType.includes(
+        "javascript"
+      ) ||
+      responseContentType.includes(
+        "ecmascript"
+      ) ||
+      pathname.endsWith(".js")
+    ) {
+      let js =
+        await response.text();
+
+      js =
+        replaceAllWordPressUrls(
+          js
+        );
+
+      res.status(
+        response.status
+      );
+
+      res.setHeader(
+        "Content-Type",
+        responseContentType ||
+          "application/javascript; charset=UTF-8"
+      );
+
+      return res.send(
+        js
       );
     }
 
@@ -501,8 +627,10 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     }
 
     // =====================================================
-    // EVERYTHING ELSE
+    // EVERYTHING ELSE (binary: images, fonts, PDFs, etc.)
     // =====================================================
+    // Passed through untouched on purpose - text-rewriting a
+    // binary file would corrupt it.
 
     const buffer =
       Buffer.from(
