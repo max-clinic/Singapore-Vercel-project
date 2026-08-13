@@ -529,7 +529,8 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     if (
       responseContentType.includes(
         "text/css"
-      )
+      ) ||
+      pathname.endsWith(".css")
     ) {
       let css =
         await response.text();
@@ -545,7 +546,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
 
       res.setHeader(
         "Content-Type",
-        responseContentType
+        responseContentType.includes("css")
+          ? responseContentType
+          : "text/css; charset=UTF-8"
       );
 
       return res.send(
