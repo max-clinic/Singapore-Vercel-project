@@ -21,37 +21,34 @@ export default async function handler(req, res) {
   const ALLOWED_ORIGIN_PATTERN =
     /^https:\/\/[a-z0-9-]+-max-clinic-projects\.vercel\.app$/i;
 
-  function resolveAllowedOrigin(requestOrigin) {
-    if (!requestOrigin) {
+  function getAllowedOrigin(origin) {
+    if (!origin) {
       return PUBLIC_ORIGIN;
     }
 
-    if (requestOrigin === PUBLIC_ORIGIN) {
+    if (origin === PUBLIC_ORIGIN) {
       return PUBLIC_ORIGIN;
     }
 
-    if (ALLOWED_ORIGIN_PATTERN.test(requestOrigin)) {
-      return requestOrigin;
+    if (ALLOWED_ORIGIN_PATTERN.test(origin)) {
+      return origin;
     }
 
     return PUBLIC_ORIGIN;
   }
 
   // =========================================================
-  // REPLACE WORDPRESS URLS
+  // REWRITE WORDPRESS URLS
   // =========================================================
 
-  function replaceAllWordPressUrls(value) {
+  function rewriteUrls(value) {
     if (value === undefined || value === null) {
       return value;
     }
 
     let result = String(value);
 
-    // -------------------------------------------------------
-    // HTTPS
-    // -------------------------------------------------------
-
+    // HTTPS absolute URLs
     result = result.replaceAll(
       `https://${WP_WWW_HOST}`,
       PUBLIC_ORIGIN
@@ -62,10 +59,7 @@ export default async function handler(req, res) {
       PUBLIC_ORIGIN
     );
 
-    // -------------------------------------------------------
-    // HTTP
-    // -------------------------------------------------------
-
+    // HTTP absolute URLs
     result = result.replaceAll(
       `http://${WP_WWW_HOST}`,
       PUBLIC_ORIGIN
@@ -76,10 +70,7 @@ export default async function handler(req, res) {
       PUBLIC_ORIGIN
     );
 
-    // -------------------------------------------------------
-    // PROTOCOL RELATIVE
-    // -------------------------------------------------------
-
+    // Protocol relative URLs
     result = result.replaceAll(
       `//${WP_WWW_HOST}`,
       `//${PUBLIC_HOST}`
@@ -90,13 +81,7 @@ export default async function handler(req, res) {
       `//${PUBLIC_HOST}`
     );
 
-    // -------------------------------------------------------
-    // ESCAPED JSON HTTPS
-    //
-    // Example:
-    // https:\/\/magenta-caterpillar-505539.hostingersite.com
-    // -------------------------------------------------------
-
+    // JSON escaped HTTPS
     result = result.replaceAll(
       `https:\\/\\/${WP_WWW_HOST}`,
       `https:\\/\\/${PUBLIC_HOST}`
@@ -107,10 +92,7 @@ export default async function handler(req, res) {
       `https:\\/\\/${PUBLIC_HOST}`
     );
 
-    // -------------------------------------------------------
-    // ESCAPED JSON HTTP
-    // -------------------------------------------------------
-
+    // JSON escaped HTTP
     result = result.replaceAll(
       `http:\\/\\/${WP_WWW_HOST}`,
       `https:\\/\\/${PUBLIC_HOST}`
@@ -121,10 +103,7 @@ export default async function handler(req, res) {
       `https:\\/\\/${PUBLIC_HOST}`
     );
 
-    // -------------------------------------------------------
-    // ESCAPED PROTOCOL RELATIVE
-    // -------------------------------------------------------
-
+    // Escaped protocol-relative URLs
     result = result.replaceAll(
       `\\/\\/${WP_WWW_HOST}`,
       `\\/\\/${PUBLIC_HOST}`
@@ -135,10 +114,7 @@ export default async function handler(req, res) {
       `\\/\\/${PUBLIC_HOST}`
     );
 
-    // -------------------------------------------------------
-    // HOSTNAME ONLY
-    // -------------------------------------------------------
-
+    // Hostname-only occurrences
     result = result.replaceAll(
       WP_WWW_HOST,
       PUBLIC_HOST
@@ -153,31 +129,27 @@ export default async function handler(req, res) {
   }
 
   // =========================================================
-  // NORMALIZE REDIRECT URL
+  // NORMALIZE REDIRECT
   // =========================================================
 
-  function normalizeRedirectUrl(location) {
+  function normalizeRedirect(location) {
     if (!location) {
       return location;
     }
 
-    let result = replaceAllWordPressUrls(location);
+    let result = rewriteUrls(location);
 
-    // Relative redirect
+    // Relative URL
     if (
       result.startsWith("/") &&
       !result.startsWith("//")
     ) {
-      result =
-        PUBLIC_ORIGIN +
-        result;
+      result = PUBLIC_ORIGIN + result;
     }
 
-    // Protocol-relative redirect
+    // Protocol-relative URL
     if (result.startsWith("//")) {
-      result =
-        "https:" +
-        result;
+      result = "https:" + result;
     }
 
     return result;
@@ -185,7 +157,7 @@ export default async function handler(req, res) {
 
   try {
     // =======================================================
-    // INCOMING URL
+    // INCOMING REQUEST
     // =======================================================
 
     const incoming = new URL(
@@ -266,19 +238,13 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       }
     }
 
-    // =======================================================
-    // WORDPRESS HOST
-    // =======================================================
-
+    // WordPress backend host
     headers.set(
       "Host",
       WP_HOST
     );
 
-    // =======================================================
-    // PUBLIC DOMAIN INFORMATION
-    // =======================================================
-
+    // Tell WordPress the public domain
     headers.set(
       "X-Forwarded-Host",
       PUBLIC_HOST
@@ -303,32 +269,21 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
 
     if (isAjax) {
       /*
-       * Keep the browser's original Origin when possible.
-       * This is safer for CORS/security validation.
-       */
-
-      const browserOrigin =
-        req.headers.origin;
-
-      if (browserOrigin) {
-        headers.set(
-          "Origin",
-          browserOrigin
-        );
-      } else {
-        headers.set(
-          "Origin",
-          PUBLIC_ORIGIN
-        );
-      }
-
-      /*
-       * Referer should represent the public site.
+       * Keep the public origin.
+       * Do NOT replace the browser's Origin
+       * with the Hostinger origin.
        */
 
       headers.set(
+        "Origin",
+        req.headers.origin ||
+          PUBLIC_ORIGIN
+      );
+
+      headers.set(
         "Referer",
-        PUBLIC_ORIGIN + "/"
+        req.headers.referer ||
+          PUBLIC_ORIGIN + "/"
       );
 
       headers.set(
@@ -338,7 +293,7 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     }
 
     // =======================================================
-    // DO NOT REQUEST COMPRESSED RESPONSE
+    // DISABLE UPSTREAM COMPRESSION
     // =======================================================
 
     headers.delete(
@@ -474,7 +429,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         req.body
       ) {
         body =
-          JSON.stringify(req.body);
+          JSON.stringify(
+            req.body
+          );
       }
     }
 
@@ -510,9 +467,9 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
             "connection",
             "location",
             "refresh",
+            "set-cookie",
             "access-control-allow-origin",
-            "access-control-allow-credentials",
-            "set-cookie"
+            "access-control-allow-credentials"
           ].includes(lower)
         ) {
           res.setHeader(
@@ -524,23 +481,23 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     );
 
     // =======================================================
-    // PRESERVE SET-COOKIE
+    // COOKIES
     // =======================================================
 
     if (
       typeof response.headers.getSetCookie ===
       "function"
     ) {
-      const setCookies =
+      const cookies =
         response.headers.getSetCookie();
 
       if (
-        setCookies &&
-        setCookies.length
+        cookies &&
+        cookies.length > 0
       ) {
         res.setHeader(
           "Set-Cookie",
-          setCookies
+          cookies
         );
       }
     }
@@ -566,14 +523,11 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     const requestOrigin =
       req.headers.origin || "";
 
-    const allowedOrigin =
-      resolveAllowedOrigin(
-        requestOrigin
-      );
-
     res.setHeader(
       "Access-Control-Allow-Origin",
-      allowedOrigin
+      getAllowedOrigin(
+        requestOrigin
+      )
     );
 
     res.setHeader(
@@ -597,7 +551,7 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     );
 
     // =======================================================
-    // NEVER CACHE DYNAMIC REQUESTS
+    // NO CACHE FOR DYNAMIC REQUESTS
     // =======================================================
 
     if (
@@ -612,7 +566,7 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     }
 
     // =======================================================
-    // OPTIONS / PREFLIGHT
+    // OPTIONS
     // =======================================================
 
     if (
@@ -638,7 +592,7 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
 
       if (location) {
         location =
-          normalizeRedirectUrl(
+          normalizeRedirect(
             location
           );
 
@@ -656,31 +610,26 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     }
 
     // =======================================================
-    // REFRESH HEADER REDIRECT
+    // REFRESH REDIRECT
     // =======================================================
 
-    const refreshHeader =
+    const refresh =
       response.headers.get(
         "refresh"
       );
 
-    if (refreshHeader) {
-      const rewrittenRefresh =
-        replaceAllWordPressUrls(
-          refreshHeader
-        );
-
+    if (refresh) {
       res.setHeader(
         "Refresh",
-        rewrittenRefresh
+        rewriteUrls(refresh)
       );
     }
 
     // =======================================================
-    // RESPONSE CONTENT TYPE
+    // CONTENT TYPE
     // =======================================================
 
-    const responseContentType =
+    const contentType =
       (
         response.headers.get(
           "content-type"
@@ -688,27 +637,22 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       ).toLowerCase();
 
     // =======================================================
-    // TEXT / HTML
+    // HTML
     // =======================================================
 
     if (
-      responseContentType.includes(
+      contentType.includes(
         "text/html"
       ) ||
-      responseContentType.includes(
+      contentType.includes(
         "application/xhtml+xml"
-      ) ||
-      responseContentType.includes(
-        "text/plain"
       )
     ) {
-      let text =
+      let html =
         await response.text();
 
-      text =
-        replaceAllWordPressUrls(
-          text
-        );
+      html =
+        rewriteUrls(html);
 
       res.status(
         response.status
@@ -719,11 +663,11 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         response.headers.get(
           "content-type"
         ) ||
-        "text/plain; charset=utf-8"
+        "text/html; charset=utf-8"
       );
 
       return res.send(
-        text
+        html
       );
     }
 
@@ -732,7 +676,7 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     // =======================================================
 
     if (
-      responseContentType.includes(
+      contentType.includes(
         "text/css"
       )
     ) {
@@ -740,9 +684,7 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         await response.text();
 
       css =
-        replaceAllWordPressUrls(
-          css
-        );
+        rewriteUrls(css);
 
       res.status(
         response.status
@@ -766,10 +708,10 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     // =======================================================
 
     if (
-      responseContentType.includes(
+      contentType.includes(
         "javascript"
       ) ||
-      responseContentType.includes(
+      contentType.includes(
         "ecmascript"
       ) ||
       pathname.endsWith(
@@ -780,9 +722,7 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         await response.text();
 
       js =
-        replaceAllWordPressUrls(
-          js
-        );
+        rewriteUrls(js);
 
       res.status(
         response.status
@@ -802,11 +742,11 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     }
 
     // =======================================================
-    // XML / SITEMAP
+    // XML
     // =======================================================
 
     if (
-      responseContentType.includes(
+      contentType.includes(
         "xml"
       ) ||
       pathname.endsWith(
@@ -820,9 +760,7 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         await response.text();
 
       xml =
-        replaceAllWordPressUrls(
-          xml
-        );
+        rewriteUrls(xml);
 
       res.status(
         response.status
@@ -842,14 +780,14 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     }
 
     // =======================================================
-    // JSON / AJAX
+    // JSON / FLUENT FORMS AJAX
     // =======================================================
 
     if (
-      responseContentType.includes(
+      contentType.includes(
         "application/json"
       ) ||
-      responseContentType.includes(
+      contentType.includes(
         "+json"
       )
     ) {
@@ -857,44 +795,22 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
         await response.text();
 
       /*
-       * IMPORTANT:
+       * This is important for Fluent Forms.
        *
-       * Fluent Forms can return the Thank You
-       * redirect URL inside JSON.
-       *
-       * Example:
+       * Fluent Forms can return:
        *
        * {
-       *   "success": true,
-       *   "redirectUrl":
+       *   success: true,
+       *   redirectUrl:
        *   "https://magenta-caterpillar-505539.hostingersite.com/thank-you/"
        * }
        *
-       * We rewrite that URL before sending
-       * the response back to the browser.
+       * Rewrite the URL before the browser
+       * receives the JSON.
        */
 
       json =
-        replaceAllWordPressUrls(
-          json
-        );
-
-      /*
-       * Also handle escaped URLs that may contain
-       * Unicode slash escaping or other encoding.
-       */
-
-      json =
-        json.replaceAll(
-          `https%3A%2F%2F${WP_HOST}`,
-          `https%3A%2F%2F${PUBLIC_HOST}`
-        );
-
-      json =
-        json.replaceAll(
-          `https%3A%2F%2F${WP_WWW_HOST}`,
-          `https%3A%2F%2F${PUBLIC_HOST}`
-        );
+        rewriteUrls(json);
 
       res.status(
         response.status
@@ -931,7 +847,6 @@ Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
     );
 
   } catch (error) {
-
     console.error(
       "WordPress proxy error:",
       error
