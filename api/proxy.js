@@ -5,6 +5,9 @@ export default async function handler(req, res) {
   const WP_HOST =
     "magenta-caterpillar-505539.hostingersite.com";
 
+  const WP_WWW_HOST =
+    "www.magenta-caterpillar-505539.hostingersite.com";
+
   const PUBLIC_ORIGIN =
     "https://www.mymaxclinic.sg";
 
@@ -12,20 +15,32 @@ export default async function handler(req, res) {
     "www.mymaxclinic.sg";
 
   try {
+    // =====================================================
+    // INCOMING URL
+    // =====================================================
+
     const incoming = new URL(
       req.url,
       `https://${req.headers.host}`
     );
 
+    const pathname = incoming.pathname;
+
     // =====================================================
     // ROBOTS.TXT
     // =====================================================
 
-    if (incoming.pathname === "/robots.txt") {
+    if (pathname === "/robots.txt") {
       res.status(200);
+
       res.setHeader(
         "Content-Type",
         "text/plain; charset=utf-8"
+      );
+
+      res.setHeader(
+        "Cache-Control",
+        "public, max-age=3600"
       );
 
       return res.send(
@@ -39,21 +54,21 @@ Disallow: /wp-login.php
 Disallow: /?s=
 Disallow: /search/
 
-Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
+Sitemap: ${PUBLIC_ORIGIN}/sitemap_index.xml`
       );
     }
 
     // =====================================================
-    // TARGET WORDPRESS URL
+    // WORDPRESS TARGET
     // =====================================================
 
     const target =
       WP_ORIGIN +
-      incoming.pathname +
+      pathname +
       incoming.search;
 
     // =====================================================
-    // HEADERS
+    // REQUEST HEADERS
     // =====================================================
 
     const headers = new Headers();
@@ -74,16 +89,23 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
           key,
           Array.isArray(value)
             ? value.join(",")
-            : value
+            : String(value)
         );
       }
     }
 
-    // WordPress host
-    headers.set("Host", WP_HOST);
+    // -----------------------------------------------------
+    // IMPORTANT
+    //
+    // WordPress must receive its own Host.
+    // But DO NOT overwrite Origin/Referer.
+    // -----------------------------------------------------
 
-    // IMPORTANT:
-    // Tell WordPress that the visitor is using the public domain.
+    headers.set(
+      "Host",
+      WP_HOST
+    );
+
     headers.set(
       "X-Forwarded-Host",
       PUBLIC_HOST
@@ -94,45 +116,84 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
       "https"
     );
 
-    // IMPORTANT FOR FLUENT FORMS / AJAX
-    if (incoming.pathname === "/wp-admin/admin-ajax.php") {
+    headers.set(
+      "X-Forwarded-For",
+      req.headers["x-forwarded-for"] ||
+      req.socket?.remoteAddress ||
+      ""
+    );
+
+    // -----------------------------------------------------
+    // DO NOT CHANGE BROWSER ORIGIN
+    // -----------------------------------------------------
+    //
+    // The browser sends:
+    //
+    // Origin: https://www.mymaxclinic.sg
+    //
+    // Keep it that way.
+    //
+
+    if (req.headers.origin) {
       headers.set(
         "Origin",
-        PUBLIC_ORIGIN
-      );
-
-      headers.set(
-        "Referer",
-        PUBLIC_ORIGIN + "/"
+        req.headers.origin
       );
     }
 
-    // Never request compressed response
-    headers.delete("accept-encoding");
+    if (req.headers.referer) {
+      headers.set(
+        "Referer",
+        req.headers.referer
+      );
+    }
+
+    // -----------------------------------------------------
+    // Prevent compressed upstream response.
+    // This allows URL replacement safely.
+    // -----------------------------------------------------
+
+    headers.delete(
+      "accept-encoding"
+    );
 
     // =====================================================
     // REQUEST BODY
     // =====================================================
 
-    let body;
+    let body = undefined;
 
     if (
       req.method !== "GET" &&
       req.method !== "HEAD"
     ) {
       const contentType =
-        req.headers["content-type"] || "";
+        String(
+          req.headers["content-type"] || ""
+        ).toLowerCase();
+
+      // ---------------------------------------------------
+      // FORM URL ENCODED
+      // ---------------------------------------------------
 
       if (
         contentType.includes(
           "application/x-www-form-urlencoded"
         )
       ) {
-        if (typeof req.body === "string") {
+        if (
+          typeof req.body === "string"
+        ) {
           body = req.body;
-        } else if (Buffer.isBuffer(req.body)) {
+        }
+
+        else if (
+          Buffer.isBuffer(req.body)
+        ) {
           body = req.body;
-        } else {
+        }
+
+        else {
           const params =
             new URLSearchParams();
 
@@ -141,14 +202,20 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
               const [key, value]
               of Object.entries(req.body)
             ) {
-              if (Array.isArray(value)) {
-                value.forEach((item) => {
-                  params.append(
-                    key,
-                    String(item)
-                  );
-                });
-              } else if (
+              if (
+                Array.isArray(value)
+              ) {
+                value.forEach(
+                  item => {
+                    params.append(
+                      key,
+                      String(item)
+                    );
+                  }
+                );
+              }
+
+              else if (
                 value !== undefined &&
                 value !== null
               ) {
@@ -160,9 +227,14 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
             }
           }
 
-          body = params.toString();
+          body =
+            params.toString();
         }
       }
+
+      // ---------------------------------------------------
+      // JSON
+      // ---------------------------------------------------
 
       else if (
         contentType.includes(
@@ -177,48 +249,83 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
               );
       }
 
+      // ---------------------------------------------------
+      // MULTIPART
+      // ---------------------------------------------------
+
       else if (
         contentType.includes(
           "multipart/form-data"
         )
       ) {
-        if (typeof req.body === "string") {
+        /*
+         * If Vercel has already parsed multipart,
+         * do not try to reconstruct it.
+         *
+         * Most Fluent Forms submissions are
+         * application/x-www-form-urlencoded.
+         */
+
+        if (
+          typeof req.body === "string"
+        ) {
           body = req.body;
-        } else if (Buffer.isBuffer(req.body)) {
+        }
+
+        else if (
+          Buffer.isBuffer(req.body)
+        ) {
           body = req.body;
+        }
+
+        else {
+          body = undefined;
         }
       }
 
-      else if (typeof req.body === "string") {
+      // ---------------------------------------------------
+      // OTHER
+      // ---------------------------------------------------
+
+      else if (
+        typeof req.body === "string"
+      ) {
         body = req.body;
       }
 
-      else if (Buffer.isBuffer(req.body)) {
+      else if (
+        Buffer.isBuffer(req.body)
+      ) {
         body = req.body;
       }
 
-      else if (req.body) {
+      else if (
+        req.body
+      ) {
         body =
-          JSON.stringify(req.body);
+          JSON.stringify(
+            req.body
+          );
       }
     }
 
     // =====================================================
-    // CALL WORDPRESS
+    // FETCH WORDPRESS
     // =====================================================
 
-    const response = await fetch(
-      target,
-      {
-        method: req.method,
-        headers,
-        body,
-        redirect: "manual"
-      }
-    );
+    const response =
+      await fetch(
+        target,
+        {
+          method: req.method,
+          headers,
+          body,
+          redirect: "manual"
+        }
+      );
 
     // =====================================================
-    // COPY RESPONSE HEADERS
+    // RESPONSE HEADERS
     // =====================================================
 
     response.headers.forEach(
@@ -243,7 +350,7 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
     );
 
     // =====================================================
-    // REDIRECT RESPONSE
+    // REDIRECT
     // =====================================================
 
     if (
@@ -261,6 +368,7 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
             location
           );
 
+        // Relative redirect
         if (
           location.startsWith("/")
         ) {
@@ -280,10 +388,16 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
 
         return res.end();
       }
+
+      res.status(
+        response.status
+      );
+
+      return res.end();
     }
 
     // =====================================================
-    // RESPONSE CONTENT TYPE
+    // CONTENT TYPE
     // =====================================================
 
     const responseContentType =
@@ -315,19 +429,30 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
         response.status
       );
 
+      res.setHeader(
+        "Content-Type",
+        "text/html; charset=utf-8"
+      );
+
       return res.send(
         html
       );
     }
 
     // =====================================================
-    // XML / SITEMAP
+    // XML / SITEMAP / XSL
     // =====================================================
 
     if (
-      responseContentType.includes("xml") ||
-      incoming.pathname.endsWith(".xml") ||
-      incoming.pathname.endsWith(".xsl")
+      responseContentType.includes(
+        "xml"
+      ) ||
+      pathname.endsWith(
+        ".xml"
+      ) ||
+      pathname.endsWith(
+        ".xsl"
+      )
     ) {
       let xml =
         await response.text();
@@ -352,7 +477,7 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
     }
 
     // =====================================================
-    // JSON / FLUENT FORMS / ELEMENTOR AJAX
+    // JSON / AJAX
     // =====================================================
 
     if (
@@ -371,34 +496,6 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
           json
         );
 
-      // ---------------------------------------------------
-      // FLUENT FORMS REDIRECT FIX
-      // ---------------------------------------------------
-
-      json =
-        json.replaceAll(
-          WP_ORIGIN,
-          PUBLIC_ORIGIN
-        );
-
-      json =
-        json.replaceAll(
-          WP_HOST,
-          PUBLIC_HOST
-        );
-
-      json =
-        json.replaceAll(
-          `https:\\/\\/${WP_HOST}`,
-          `https:\\/\\/${PUBLIC_HOST}`
-        );
-
-      json =
-        json.replaceAll(
-          `https:\\/\\/${WP_HOST}`,
-          `https:\\/\\/${PUBLIC_HOST}`
-        );
-
       res.status(
         response.status
       );
@@ -410,6 +507,75 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
 
       return res.send(
         json
+      );
+    }
+
+    // =====================================================
+    // CSS
+    // =====================================================
+
+    if (
+      responseContentType.includes(
+        "text/css"
+      ) ||
+      pathname.endsWith(
+        ".css"
+      )
+    ) {
+      let css =
+        await response.text();
+
+      css =
+        replaceAllWordPressUrls(
+          css
+        );
+
+      res.status(
+        response.status
+      );
+
+      res.setHeader(
+        "Content-Type",
+        "text/css; charset=utf-8"
+      );
+
+      return res.send(
+        css
+      );
+    }
+
+    // =====================================================
+    // JAVASCRIPT
+    // =====================================================
+
+    if (
+      responseContentType.includes(
+        "javascript"
+      ) ||
+      pathname.endsWith(
+        ".js"
+      )
+    ) {
+      let js =
+        await response.text();
+
+      js =
+        replaceAllWordPressUrls(
+          js
+        );
+
+      res.status(
+        response.status
+      );
+
+      res.setHeader(
+        "Content-Type",
+        responseContentType ||
+        "application/javascript; charset=utf-8"
+      );
+
+      return res.send(
+        js
       );
     }
 
@@ -430,26 +596,32 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
       buffer
     );
 
-  } catch (error) {
+  }
+
+  catch (error) {
 
     console.error(
       "WordPress proxy error:",
       error
     );
 
-    return res.status(502).json({
+    return res.status(
+      502
+    ).json({
       error:
         "WordPress proxy failed",
+
       message:
         error.message
     });
   }
 
-  // =====================================================
+  // =======================================================
   // REPLACE WORDPRESS URLS
-  // =====================================================
+  // =======================================================
 
   function replaceAllWordPressUrls(value) {
+
     if (!value) {
       return value;
     }
@@ -457,82 +629,116 @@ Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml`
     let result =
       String(value);
 
-    // HTTPS
+    // =====================================================
+    // NORMAL HTTPS
+    // =====================================================
+
+    result =
+      result.replaceAll(
+        `https://${WP_WWW_HOST}`,
+        PUBLIC_ORIGIN
+      );
+
     result =
       result.replaceAll(
         `https://${WP_HOST}`,
         PUBLIC_ORIGIN
       );
 
+    // =====================================================
+    // NORMAL HTTP
+    // =====================================================
+
     result =
       result.replaceAll(
-        `https://www.${WP_HOST}`,
+        `http://${WP_WWW_HOST}`,
         PUBLIC_ORIGIN
       );
 
-    // HTTP
     result =
       result.replaceAll(
         `http://${WP_HOST}`,
         PUBLIC_ORIGIN
       );
 
+    // =====================================================
+    // PROTOCOL RELATIVE
+    // =====================================================
+
     result =
       result.replaceAll(
-        `http://www.${WP_HOST}`,
-        PUBLIC_ORIGIN
+        `//${WP_WWW_HOST}`,
+        `//${PUBLIC_HOST}`
       );
 
-    // Protocol-relative
     result =
       result.replaceAll(
         `//${WP_HOST}`,
         `//${PUBLIC_HOST}`
       );
 
+    // =====================================================
+    // ESCAPED JSON HTTPS
+    // =====================================================
+
     result =
       result.replaceAll(
-        `//www.${WP_HOST}`,
-        `//${PUBLIC_HOST}`
+        `https:\\/\\/${WP_WWW_HOST}`,
+        `https:\\/\\/${PUBLIC_HOST}`
       );
 
-    // Escaped HTTPS
     result =
       result.replaceAll(
         `https:\\/\\/${WP_HOST}`,
         `https:\\/\\/${PUBLIC_HOST}`
       );
 
+    // =====================================================
+    // ESCAPED JSON HTTP
+    // =====================================================
+
     result =
       result.replaceAll(
-        `https:\\/\\/www.${WP_HOST}`,
+        `http:\\/\\/${WP_WWW_HOST}`,
         `https:\\/\\/${PUBLIC_HOST}`
       );
 
-    // Escaped HTTP
     result =
       result.replaceAll(
         `http:\\/\\/${WP_HOST}`,
         `https:\\/\\/${PUBLIC_HOST}`
       );
 
+    // =====================================================
+    // ESCAPED PROTOCOL RELATIVE
+    // =====================================================
+
     result =
       result.replaceAll(
-        `http:\\/\\/www.${WP_HOST}`,
-        `https:\\/\\/${PUBLIC_HOST}`
+        `\\/\\/${WP_WWW_HOST}`,
+        `\\/\\/${PUBLIC_HOST}`
       );
 
-    // Escaped protocol-relative
     result =
       result.replaceAll(
         `\\/\\/${WP_HOST}`,
         `\\/\\/${PUBLIC_HOST}`
       );
 
+    // =====================================================
+    // HTML ENTITY / URL ENCODED VARIANTS
+    // =====================================================
+
     result =
       result.replaceAll(
-        `\\/\\/www.${WP_HOST}`,
-        `\\/\\/${PUBLIC_HOST}`
+        WP_WWW_HOST,
+        PUBLIC_HOST
+      );
+
+    result =
+      result.replaceAll(
+        WP_HOST,
+        PUBLIC_HOST
       );
 
     return result;
