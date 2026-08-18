@@ -22,7 +22,25 @@ export default async function handler(req, res) {
     );
 
     const pathname = incoming.pathname;
+    // =====================================================
+// ROBOTS.TXT
+// =====================================================
 
+if (pathname === "/robots.txt") {
+  const robots = `User-agent: *
+Allow: /
+
+Sitemap: https://www.mymaxclinic.sg/sitemap_index.xml
+`;
+
+  res.status(200);
+  res.setHeader(
+    "Content-Type",
+    "text/plain; charset=utf-8"
+  );
+
+  return res.send(robots);
+}
     const target =
       WP_ORIGIN +
       pathname +
